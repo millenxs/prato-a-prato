@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Prato a Prato",
+    "slug": "prato-a-prato",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0B0F",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0B0B0F",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "package": "com.pratoaprato.app"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-image"]
+  }
+}
