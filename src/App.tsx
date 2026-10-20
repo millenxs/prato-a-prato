@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Platform, Pressable, StatusBar as RNStatusBar, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { CartSheet } from './components/CartSheet';
+import { ExperimentScreen } from './screens/ExperimentScreen';
 import { FastLaneScreen } from './screens/FastLaneScreen';
 import { FeedScreen } from './screens/FeedScreen';
 import { LabScreen } from './screens/LabScreen';
@@ -12,11 +13,12 @@ import { colors, font, spacing } from './theme';
 const TOP_PADDING = Platform.select({ android: RNStatusBar.currentHeight ?? 24, default: 52 }) ?? 24;
 const TAB_BAR_HEIGHT = 68;
 
-type Tab = 'feed' | 'decide' | 'lab';
+type Tab = 'feed' | 'decide' | 'experiment' | 'lab';
 
 const TABS: Array<{ key: Tab; label: string; icon: string }> = [
   { key: 'feed', label: 'Feed', icon: '🍽' },
   { key: 'decide', label: 'Decidir', icon: '⚡' },
+  { key: 'experiment', label: 'A/B', icon: '🧪' },
   { key: 'lab', label: 'Laboratório', icon: '🎛' },
 ];
 
@@ -42,6 +44,7 @@ function Shell() {
         {tab === 'decide' ? (
           <FastLaneScreen onOpenCart={() => setCartOpen(true)} onGoFeed={() => setTab('feed')} />
         ) : null}
+        {tab === 'experiment' ? <ExperimentScreen /> : null}
         {tab === 'lab' ? <LabScreen /> : null}
       </View>
 

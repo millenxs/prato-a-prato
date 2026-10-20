@@ -151,10 +151,32 @@ Um feed que aumenta o tempo no app e atrasa o pedido está falhando, mesmo com e
 
 ---
 
+## Experimento A/B: feed-first vs busca-first
+
+A aba **A/B** roda uma simulação sintética para comparar dois caminhos com o mesmo catálogo e as mesmas restrições duras:
+
+| Braço | Como decide | O que mede |
+|---|---|---|
+| **Feed-first** | cards ranqueados + swipe + fast lane | cards vistos, ações até add, tempo até decisão, concentração por loja, interrupções |
+| **Busca-first** | intenção explícita + lista de resultados + comparação | resultados vistos, ações de busca/filtro, tempo até decisão, conversão |
+
+Parâmetros ajustáveis na tela:
+
+- número de sessões sintéticas;
+- semente da amostra;
+- atrito da busca: baixa, média ou alta;
+- pesos e restrições herdados do **Laboratório**.
+
+Critério de vitória do protótipo: o feed-first vence se reduzir o tempo até decisão em pelo menos 8% sem perder mais que 3 pontos percentuais de conversão. O resultado mostra redução de tempo, redução de ações, delta de conversão e delta de margem.
+
+Limite importante: isso **não** é evidência de mercado. É um simulador de portfólio para explicar a hipótese, o desenho do experimento e quais métricas seriam levadas para um A/B real.
+
+---
+
 ## Decisões de arquitetura
 
 - **React Native + Expo.** Um código, três alvos (Android, iOS, web). `npm run export:web` gera o link que um recrutador abre sem instalar nada.
-- **Sem backend.** O motor é determinístico e puro; roda no cliente. Colocar API/banco aqui só atrasaria a demo — a decisão de migrar para servidor viria com o primeiro experimento A/B real.
+- **Sem backend.** O motor é determinístico e puro; roda no cliente. Colocar API/banco aqui só atrasaria a demo — a decisão de migrar para servidor viria quando o A/B precisasse coletar eventos reais.
 - **Gesto com `PanResponder` + `Animated` do core.** Sem dependência nativa extra: o swipe funciona igual em Android, iOS e web.
 - **Mídia é placeholder.** Trocar por vídeo é mudar `type` em `Media` — o card já aceita `'image' | 'video'`. Se a mídia falhar, o card cai no gradiente da marca + emoji, então a demo nunca fica em branco.
 - **Eventos locais.** `impression`, `skip`, `save`, `add`, `checkout`, `trigger_shown`, `trigger_suppressed`, `feed_rebuilt` — o mesmo vocabulário que um pipeline real teria, sem a infraestrutura.
@@ -166,8 +188,8 @@ Um feed que aumenta o tempo no app e atrasa o pedido está falhando, mesmo com e
 1. **0–15s** — "delivery otimiza busca; feed otimiza atenção. Em comida, o feed tem que *encurtar* a decisão."
 2. **15–45s** — rolar o feed, salvar dois pratos, mostrar o swipe e o card com score.
 3. **45–65s** — abrir **"Por que este prato?"** e mostrar uma pizza barrada por ETA, uma cozinha lotada e um item esgotado.
-4. **65–80s** — Laboratório: subir "margem" ou baixar o teto de interrupções e ver o feed mudar; ativar o modo silencioso e ver os gatilhos barrados.
-5. **80–90s** — o número: tempo até decisão e concentração de exposição.
+4. **65–80s** — abrir **A/B** e mostrar feed-first vs busca-first: tempo, ações, conversão e concentração.
+5. **80–90s** — Laboratório: alterar atrito/ETA/margem e voltar ao A/B para ver a hipótese mudar.
 
 ---
 
@@ -181,7 +203,7 @@ Um feed que aumenta o tempo no app e atrasa o pedido está falhando, mesmo com e
 
 ## Próximos passos plausíveis
 
-1. Persistir eventos e fazer o A/B "feed-first vs. busca-first" rodar de verdade.
+1. Persistir eventos e transformar o A/B sintético em experimento real com usuários.
 2. Trocar mídia por vídeo curto com prefetch de 2 cards e medir custo de rede.
 3. Mover o ranking para um serviço só quando o experimento exigir mudar pesos sem publicar app.
 4. Adicionar restrição de horário por categoria (café da manhã, almoço, jantar) para testar relevância contextual.

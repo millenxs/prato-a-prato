@@ -7,6 +7,7 @@
  * a exploração e o orçamento de atenção se comportam como o painel promete.
  */
 import { dishes, merchantById } from '../src/data/seed';
+import { runExperiment } from '../src/engine/experiment';
 import { buildFeed, defaultLab, updateProfile } from '../src/engine/ranking';
 import { computeMetrics } from '../src/engine/metrics';
 import { evaluateTriggers } from '../src/engine/triggers';
@@ -197,6 +198,28 @@ console.log('\n7) Sanidade do catálogo');
 check('todo prato aponta para uma loja existente', dishes.every((dish) => merchantById.has(dish.merchantId)));
 check('ids de prato são únicos', new Set(dishes.map((d) => d.id)).size === dishes.length);
 check('preços e margens são plausíveis', dishes.every((d) => d.price > 0 && d.marginPct > 0 && d.marginPct < 1));
+
+console.log('\n8) Experimento A/B');
+
+const experiment = runExperiment({ sessions: 80, seed: 2026, lab: defaultLab, searchFriction: 'media' });
+check('experimento preserva o tamanho da amostra', experiment.config.sessions === 80);
+check('ambos os braços têm conversões', experiment.feed.conversions > 0 && experiment.search.conversions > 0);
+check(
+  'taxas ficam no intervalo 0–1',
+  [experiment.feed.conversionRate, experiment.search.conversionRate].every((value) => value >= 0 && value <= 1),
+);
+check('tempo até decisão é positivo', experiment.feed.avgTimeToDecisionSec > 0 && experiment.search.avgTimeToDecisionSec > 0);
+check('resultado declara uma metodologia', experiment.methodology.length >= 4);
+check(
+  'feed-first tem menos ações que busca-first no cenário padrão',
+  experiment.feed.avgActionsToDecision < experiment.search.avgActionsToDecision,
+  `${experiment.feed.avgActionsToDecision.toFixed(1)} vs ${experiment.search.avgActionsToDecision.toFixed(1)}`,
+);
+check(
+  'winner sempre é um valor conhecido',
+  ['feed-first', 'search-first', 'inconclusive'].includes(experiment.winner),
+  String(experiment.winner),
+);
 
 console.log(`\n${failures === 0 ? 'todos os checks passaram' : `${failures} check(s) falharam`}\n`);
 process.exitCode = failures === 0 ? 0 : 1;
