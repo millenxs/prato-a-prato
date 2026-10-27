@@ -18,7 +18,7 @@ type Tab = 'feed' | 'decide' | 'experiment' | 'lab';
 const TABS: Array<{ key: Tab; label: string; icon: string }> = [
   { key: 'feed', label: 'Feed', icon: '🍽' },
   { key: 'decide', label: 'Decidir', icon: '⚡' },
-  { key: 'experiment', label: 'A/B', icon: '🧪' },
+  { key: 'experiment', label: 'Case A/B', icon: '📊' },
   { key: 'lab', label: 'Laboratório', icon: '🎛' },
 ];
 

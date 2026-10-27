@@ -220,6 +220,14 @@ check(
   ['feed-first', 'search-first', 'inconclusive'].includes(experiment.winner),
   String(experiment.winner),
 );
+check(
+  'case study gera funil de 4 etapas e distribuição de tempo',
+  experiment.funnel.length === 4 && experiment.timeBuckets.length === 5,
+);
+check(
+  'case study desdobra todas as intenções e guardrails de negócio',
+  experiment.byIntent.length === 8 && experiment.guardrails.length === 4,
+);
 
 console.log(`\n${failures === 0 ? 'todos os checks passaram' : `${failures} check(s) falharam`}\n`);
 process.exitCode = failures === 0 ? 0 : 1;
