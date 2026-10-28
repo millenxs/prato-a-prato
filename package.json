@@ -9,6 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "server": "tsc -p tsconfig.smoke.json && node .tmp-check/server/index.js",
     "smoke": "tsc -p tsconfig.smoke.json && node .tmp-check/scripts/smoke.js",
     "export:web": "expo export -p web"
   },

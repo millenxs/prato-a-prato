@@ -2,6 +2,7 @@ node_modules/
 .expo/
 dist/
 .tmp-check/
+server/data/
 web-build/
 *.mp4
 *.log

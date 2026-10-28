@@ -36,7 +36,7 @@ const PILLARS = [
 ];
 
 export function ExperimentScreen() {
-  const { state } = useStore();
+  const { state, tasteAnalysis, backendOnline } = useStore();
   const [sessions, setSessions] = useState(120);
   const [seed, setSeed] = useState(2026);
   const [friction, setFriction] = useState<Friction>('media');
@@ -48,6 +48,7 @@ export function ExperimentScreen() {
 
   const maxTime = Math.max(result.feed.avgTimeToDecisionSec, result.search.avgTimeToDecisionSec, 1);
   const maxActions = Math.max(result.feed.avgActionsToDecision, result.search.avgActionsToDecision, 1);
+  const rt = tasteAnalysis.realTelemetry;
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -58,24 +59,88 @@ export function ExperimentScreen() {
         style={styles.hero}
       >
         <View style={styles.heroBadges}>
-          <Badge label="CASE STUDY VISUAL" tone="accent" />
-          <Badge label="ENGENHARIA DE PRODUTO" tone="gold" />
-          <Badge label={`${result.config.sessions} SESSÕES SINTÉTICAS`} tone="neutral" />
+          <Badge label="CASE STUDY & TELEMETRIA REAL" tone="accent" />
+          <Badge label={backendOnline ? 'API NODE.JS + TS ATIVA (:3333)' : 'MOTOR EM TEMPO REAL'} tone="success" />
+          <Badge label={`${tasteAnalysis.totalSignals} SINAIS REAIS`} tone="gold" />
         </View>
         <Text style={styles.title}>Feed-first vs. Busca-first</Text>
         <Text style={styles.subtitle}>
-          Como um feed vertical com restrições duras de supply, Fast Lane e orçamento de atenção encurta a decisão de
-          pedido sem sacrificar a margem do restaurante.
+          Como um feed vertical com restrições duras de supply, Fast Lane e análise de gosto em tempo real encurta a
+          decisão de pedido sem sacrificar a margem do restaurante.
         </Text>
 
         <View style={styles.heroQuote}>
           <Text style={styles.heroQuoteLabel}>TESE CENTRAL</Text>
           <Text style={styles.heroQuoteText}>
             “Delivery tradicional otimiza busca; feeds sociais otimizam atenção. Em comida, o feed só vence se reduzir
-            o tempo até o pedido mantendo conversão e margem saudável.”
+            o tempo até o pedido mantendo conversão e recomendação assertiva.”
           </Text>
         </View>
       </LinearGradient>
+
+      <Card>
+        <View style={styles.verdictHeader}>
+          <SectionLabel>Dados reais da sua sessão (Você vs. Busca Tradicional)</SectionLabel>
+          <Badge
+            label={rt.hasRealInteractions ? `CONFIANÇA ${tasteAnalysis.confidencePct}%` : 'AGUARDANDO INTERAÇÃO'}
+            tone={rt.hasRealInteractions ? 'success' : 'neutral'}
+          />
+        </View>
+        <Text style={styles.chartIntro}>{tasteAnalysis.summaryText}</Text>
+
+        <View style={styles.liftGrid}>
+          <Lift
+            label="seu tempo até o 1º pedido"
+            value={rt.realTimeToDecisionSec !== null ? `${rt.realTimeToDecisionSec}s` : '—'}
+            positive={rt.realTimeToDecisionSec === null || rt.realTimeToDecisionSec <= rt.searchBaselineSec}
+          />
+          <Lift
+            label="economia vs busca (44s)"
+            value={rt.timeSavedVsSearchPct !== null ? `${rt.timeSavedVsSearchPct >= 0 ? '+' : ''}${rt.timeSavedVsSearchPct}%` : '—'}
+            positive={(rt.timeSavedVsSearchPct ?? 0) >= 0}
+          />
+          <Lift
+            label="acerto da recomendação"
+            value={rt.recommendationHitRatePct > 0 ? `${rt.recommendationHitRatePct}%` : '—'}
+            positive={rt.recommendationHitRatePct >= 60}
+          />
+          <Lift
+            label="sinais reais capturados"
+            value={`${rt.realLikes}♥ · ${rt.realWatchedComplete}🎬 · ${rt.realCartAdds}🛒`}
+            positive
+          />
+        </View>
+
+        <View style={styles.guardrailWrap}>
+          <Text style={styles.subHeading}>Predição real de gosto (O que você vai gostar vs. evitar)</Text>
+          <View style={styles.guardrailList}>
+            {tasteAnalysis.predictedFavorites.slice(0, 2).map((fav) => (
+              <View key={fav.item.dish.id} style={styles.guardrailRow}>
+                <View style={styles.guardrailText}>
+                  <Text style={styles.guardrailLabel}>
+                    Recomendado: {fav.item.dish.name} ({fav.item.merchant.name})
+                  </Text>
+                  <Text style={styles.guardrailMeta}>{fav.reasonsToLike.join(' · ')}</Text>
+                </View>
+                <Badge label={`${fav.matchPct}% MATCH`} tone="success" />
+              </View>
+            ))}
+            {tasteAnalysis.predictedAvoid.slice(0, 1).map((av) => (
+              <View key={av.item.dish.id} style={styles.guardrailRow}>
+                <View style={styles.guardrailText}>
+                  <Text style={styles.guardrailLabel}>
+                    Rebaixado p/ você: {av.item.dish.name} ({av.item.merchant.name})
+                  </Text>
+                  <Text style={styles.guardrailMeta}>
+                    {av.reasonsToAvoid.length > 0 ? av.reasonsToAvoid.join(' · ') : 'Menor compatibilidade com seu histórico'}
+                  </Text>
+                </View>
+                <Badge label="EVITADO" tone="danger" />
+              </View>
+            ))}
+          </View>
+        </View>
+      </Card>
 
       <View style={styles.pillarList}>
         {PILLARS.map((pillar) => (

@@ -10,6 +10,7 @@ import { dishes, merchantById } from '../src/data/seed';
 import { runExperiment } from '../src/engine/experiment';
 import { groupCartByMerchant, nextOrderStage, splitCartIntoOrders } from '../src/engine/orders';
 import { buildFeed, defaultLab, rerankUpcoming, topTasteProfile, updateProfile } from '../src/engine/ranking';
+import { analyzeUserTaste } from '../src/engine/tasteAnalyzer';
 import { computeMetrics } from '../src/engine/metrics';
 import { evaluateTriggers } from '../src/engine/triggers';
 import type { FeedItem, LabConfig } from '../src/types';
@@ -280,6 +281,46 @@ check(
   splitOrders[0]?.items.length === 1 &&
     splitOrders[0]?.items[0]?.qty === 2 &&
     nextOrderStage(splitOrders[0].stage) === 'a_caminho',
+);
+
+console.log('\n10) Análise real de gosto e predição de recomendação');
+
+const tasteResult = analyzeUserTaste({
+  cfg: defaultLab,
+  profile: burgerLover,
+  savedIds: ['d01', 'd02'], // hambúrguer / carne / queijo / smash
+  watchedCompleteIds: ['d14'], // carne de sol
+  skippedIds: ['d29', 'd30'], // vegano / bowl / falafel
+  cartDishIds: ['d01'],
+  events: [
+    { id: 'e1', name: 'impression', at: 1000, dishId: 'd01', merchantId: 'm1' },
+    { id: 'e2', name: 'save', at: 4000, dishId: 'd01' },
+    { id: 'e3', name: 'skip', at: 6000, dishId: 'd29' },
+    { id: 'e4', name: 'add', at: 15000, dishId: 'd01' },
+  ],
+  sessionStart: 0,
+  firstAddAt: 15000,
+});
+
+check(
+  'detecta corretamente o que o usuário GOSTA (carne/hambúrguer)',
+  tasteResult.willLike.some((f) => f.feature === 'carne' && f.score > 0),
+);
+check(
+  'detecta corretamente o que o usuário NÃO GOSTA (vegano pulado)',
+  tasteResult.willDislike.some((f) => f.feature === 'vegano' && f.score < 0),
+);
+check(
+  'gera recomendações preditas compatíveis e separa os itens a evitar',
+  tasteResult.predictedFavorites.length > 0 &&
+    tasteResult.predictedAvoid.length > 0 &&
+    (tasteResult.predictedFavorites[0]?.matchPct ?? 0) > (tasteResult.predictedAvoid[0]?.matchPct ?? 100),
+);
+check(
+  'calcula telemetria real da sessão vs baseline de busca',
+  tasteResult.realTelemetry.realTimeToDecisionSec === 15 &&
+    (tasteResult.realTelemetry.timeSavedVsSearchPct ?? 0) > 0 &&
+    tasteResult.realTelemetry.recommendationHitRatePct === 100,
 );
 
 console.log(`\n${failures === 0 ? 'todos os checks passaram' : `${failures} check(s) falharam`}\n`);

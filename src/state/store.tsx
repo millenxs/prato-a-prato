@@ -18,6 +18,7 @@ import {
   updateProfile,
   type BuildFeedResult,
 } from '../engine/ranking';
+import { analyzeUserTaste, type TasteAnalysisResult } from '../engine/tasteAnalyzer';
 import { evaluateTriggers } from '../engine/triggers';
 import type {
   ActiveMerchantOrder,
@@ -379,6 +380,8 @@ interface StoreValue {
   state: AppState;
   metrics: SessionMetrics;
   tasteProfile: TasteEntry[];
+  tasteAnalysis: TasteAnalysisResult;
+  backendOnline: boolean;
   trigger: TriggerDecision;
   cartItems: Array<{ dishId: string; name: string; emoji: string; qty: number; price: number; merchantName: string }>;
   cartGroups: CartMerchantGroup[];
@@ -407,14 +410,49 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
+const API_CANDIDATES = ['http://127.0.0.1:3333', 'http://192.168.1.5:3333'];
+
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, () => createInitialState());
   const [tick, setTick] = useState(0);
+  const [apiBase, setApiBase] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((value) => value + 1), 5000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (const base of API_CANDIDATES) {
+        try {
+          const res = await fetch(`${base}/api/health`);
+          if (res.ok) {
+            if (!cancelled) setApiBase(base);
+            return;
+          }
+        } catch {
+          // tenta o próximo candidato (localhost vs LAN)
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const syncApi = useMemo(
+    () => (pathUrl: string, method: 'POST' | 'PATCH', payload: unknown) => {
+      if (!apiBase) return;
+      void fetch(`${apiBase}${pathUrl}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => undefined);
+    },
+    [apiBase],
+  );
 
   const now = Date.now() + tick;
 
@@ -437,6 +475,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const tasteProfile = useMemo(() => topTasteProfile(state.profile, 6), [state.profile]);
+
+  const tasteAnalysis = useMemo(
+    () =>
+      analyzeUserTaste({
+        cfg: state.lab,
+        profile: state.profile,
+        savedIds: state.savedIds,
+        watchedCompleteIds: state.watchedCompleteIds,
+        skippedIds: state.skippedIds,
+        cartDishIds: state.cart.map((c) => c.dishId),
+        events: state.events,
+        sessionStart: state.sessionStart,
+        firstAddAt: state.firstAddAt,
+      }),
+    [state.lab, state.profile, state.savedIds, state.watchedCompleteIds, state.skippedIds, state.cart, state.events, state.sessionStart, state.firstAddAt],
+  );
 
   const trigger = useMemo(
     () =>
@@ -468,16 +522,42 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const actions = useMemo(
     () => ({
       focus: (dishId: string) => dispatch({ type: 'focus', dishId }),
-      impression: (dishId: string, merchantId: string) =>
-        dispatch({ type: 'impression', at: Date.now(), dishId, merchantId }),
-      watchComplete: (dishId: string) => dispatch({ type: 'watchComplete', at: Date.now(), dishId }),
-      skip: (dishId: string) => dispatch({ type: 'skip', at: Date.now(), dishId }),
-      save: (dishId: string) => dispatch({ type: 'save', at: Date.now(), dishId }),
-      unsave: (dishId: string) => dispatch({ type: 'unsave', at: Date.now(), dishId }),
-      add: (dishId: string) => dispatch({ type: 'add', at: Date.now(), dishId }),
-      remove: (dishId: string) => dispatch({ type: 'remove', at: Date.now(), dishId }),
-      checkout: (meta?: SplitOrdersMeta) => dispatch({ type: 'checkout', at: Date.now(), meta }),
-      advanceOrderStage: (orderId: string) => dispatch({ type: 'advanceOrderStage', orderId }),
+      impression: (dishId: string, merchantId: string) => {
+        dispatch({ type: 'impression', at: Date.now(), dishId, merchantId });
+        syncApi('/api/interactions', 'POST', { type: 'impression', dishId });
+      },
+      watchComplete: (dishId: string) => {
+        dispatch({ type: 'watchComplete', at: Date.now(), dishId });
+        syncApi('/api/interactions', 'POST', { type: 'watch_complete', dishId });
+      },
+      skip: (dishId: string) => {
+        dispatch({ type: 'skip', at: Date.now(), dishId });
+        syncApi('/api/interactions', 'POST', { type: 'skip', dishId });
+      },
+      save: (dishId: string) => {
+        dispatch({ type: 'save', at: Date.now(), dishId });
+        syncApi('/api/interactions', 'POST', { type: 'save', dishId });
+      },
+      unsave: (dishId: string) => {
+        dispatch({ type: 'unsave', at: Date.now(), dishId });
+        syncApi('/api/interactions', 'POST', { type: 'unsave', dishId });
+      },
+      add: (dishId: string) => {
+        dispatch({ type: 'add', at: Date.now(), dishId });
+        syncApi('/api/interactions', 'POST', { type: 'add', dishId });
+      },
+      remove: (dishId: string) => {
+        dispatch({ type: 'remove', at: Date.now(), dishId });
+        syncApi('/api/interactions', 'POST', { type: 'remove', dishId });
+      },
+      checkout: (meta?: SplitOrdersMeta) => {
+        dispatch({ type: 'checkout', at: Date.now(), meta });
+        syncApi('/api/orders', 'POST', { meta });
+      },
+      advanceOrderStage: (orderId: string) => {
+        dispatch({ type: 'advanceOrderStage', orderId });
+        syncApi(`/api/orders/${encodeURIComponent(orderId)}/stage`, 'PATCH', {});
+      },
       clearActiveOrders: () => dispatch({ type: 'clearActiveOrders' }),
       closeCheckout: () => dispatch({ type: 'closeCheckout' }),
       setLab: (lab: LabConfig) => dispatch({ type: 'setLab', lab }),
@@ -486,14 +566,28 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       triggerDismiss: (id: string) => dispatch({ type: 'triggerDismiss', at: Date.now(), id }),
       triggerSuppressed: (id: string, reason: string) =>
         dispatch({ type: 'triggerSuppressed', at: Date.now(), id, reason }),
-      resetSession: () => dispatch({ type: 'resetSession', at: Date.now() }),
+      resetSession: () => {
+        dispatch({ type: 'resetSession', at: Date.now() });
+        syncApi('/api/interactions', 'POST', { type: 'reset' });
+      },
     }),
-    [],
+    [syncApi],
   );
 
   const value = useMemo<StoreValue>(
-    () => ({ state, metrics, tasteProfile, trigger, cartItems, cartGroups, cartTotal, actions }),
-    [state, metrics, tasteProfile, trigger, cartItems, cartGroups, cartTotal, actions],
+    () => ({
+      state,
+      metrics,
+      tasteProfile,
+      tasteAnalysis,
+      backendOnline: apiBase !== null,
+      trigger,
+      cartItems,
+      cartGroups,
+      cartTotal,
+      actions,
+    }),
+    [state, metrics, tasteProfile, tasteAnalysis, apiBase, trigger, cartItems, cartGroups, cartTotal, actions],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
