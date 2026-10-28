@@ -1,28 +1,13 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ArrowUpRight, Heart, Info, Pause, Play, ShoppingBag, Star, Clock3 } from './icons';
+import React, { useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, font, radius, spacing } from '../theme';
-import type { FeedItem, ReelKind } from '../types';
+import { dishArtwork, merchantInitials } from '../data/artwork';
+import { colors, face } from '../theme';
+import type { FeedItem } from '../types';
 import { formatBRL } from './ui';
-
-const SWIPE_THRESHOLD = 100;
-
-const KIND_BADGE: Record<ReelKind, { label: string; bg: string; color: string }> = {
-  promocao: { label: '🔥 PROMOÇÃO NO REEL', bg: '#FF2D55', color: '#FFFFFF' },
-  combo: { label: '🎁 COMBO ESPECIAL', bg: '#FFC857', color: '#111116' },
-  bastidores: { label: '🎬 BASTIDORES DA COZINHA', bg: 'rgba(255,255,255,0.20)', color: '#FFFFFF' },
-  prato: { label: '🍽 PRATO DO DIA', bg: 'rgba(255,90,54,0.88)', color: '#FFFFFF' },
-};
-
-const formatLikes = (count: number): string =>
-  count >= 1000 ? `${(count / 1000).toFixed(1).replace('.', ',')} mil` : String(count);
-
-const formatTimer = (sec: number): string => {
-  const s = Math.max(0, Math.min(60, Math.floor(sec)));
-  return `0:${s.toString().padStart(2, '0')}`;
-};
 
 export function FeedCard({
   item,
@@ -30,10 +15,12 @@ export function FeedCard({
   isSaved,
   isWatchedComplete,
   cartQty,
-  onSkip,
+  position,
+  compact,
   onSave,
   onWatchComplete,
   onAdd,
+  onOpenCart,
   onWhy,
 }: {
   item: FeedItem;
@@ -41,552 +28,398 @@ export function FeedCard({
   isSaved: boolean;
   isWatchedComplete: boolean;
   cartQty: number;
-  onSkip: () => void;
+  position: string;
+  compact: boolean;
   onSave: () => void;
   onWatchComplete: () => void;
   onAdd: () => void;
+  onOpenCart: () => void;
   onWhy: () => void;
 }) {
-  const { width } = useWindowDimensions();
-  const pan = useRef(new Animated.ValueXY()).current;
-  const zoom = useRef(new Animated.Value(1)).current;
-  const heartBurst = useRef(new Animated.Value(0)).current;
-  const lastTapRef = useRef<number>(0);
-
-  const [mediaFailed, setMediaFailed] = useState(false);
+  const { dish, merchant } = item;
   const [paused, setPaused] = useState(false);
-  const [elapsedSec, setElapsedSec] = useState(0);
+  const [foreground, setForeground] = useState(AppState.currentState === 'active' || Platform.OS === 'web');
+  const [ready, setReady] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const elapsedRef = useRef(0);
+  const completed = useRef(isWatchedComplete);
+  const onComplete = useRef(onWatchComplete);
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zoom = useRef(new Animated.Value(1)).current;
+  const burst = useRef(new Animated.Value(0)).current;
+  const duration = Math.min(60, Math.max(1, dish.durationSec));
+  const playing = isActive && !paused && foreground && ready;
+  onComplete.current = onWatchComplete;
+  completed.current = completed.current || isWatchedComplete;
 
-  const { merchant, dish } = item;
-  const durationSec = Math.min(60, Math.max(15, dish.durationSec));
-  const progress = Math.min(1, elapsedSec / durationSec);
-
-  // Movimento suave estilo vídeo (Ken Burns) enquanto o Reel está ativo.
   useEffect(() => {
-    if (!isActive || paused) {
-      zoom.stopAnimation();
-      return;
-    }
-    zoom.setValue(1);
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(zoom, { toValue: 1.09, duration: 6500, useNativeDriver: false }),
-        Animated.timing(zoom, { toValue: 1.0, duration: 6500, useNativeDriver: false }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [isActive, paused, zoom]);
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const motion = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    const app = AppState.addEventListener('change', (value) => setForeground(value === 'active'));
+    const visibility = () => setForeground(document.visibilityState === 'visible');
+    if (Platform.OS === 'web') document.addEventListener('visibilitychange', visibility);
+    return () => {
+      motion.remove();
+      app.remove();
+      if (Platform.OS === 'web') document.removeEventListener('visibilitychange', visibility);
+      if (tapTimer.current) clearTimeout(tapTimer.current);
+    };
+  }, []);
 
-  // Cronômetro real do Reel (máximo 60s). Ao completar >= 85% dispara `onWatchComplete`.
   useEffect(() => {
     if (!isActive) {
-      setElapsedSec(0);
+      elapsedRef.current = 0;
+      setElapsed(0);
       setPaused(false);
-      return;
     }
-    if (paused) return;
+  }, [isActive]);
 
-    const interval = setInterval(() => {
-      setElapsedSec((prev) => {
-        const next = prev + 0.25;
-        if (next >= durationSec * 0.85 && !isWatchedComplete) {
-          onWatchComplete();
+  useEffect(() => {
+    if (!playing) return;
+    let previous = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      elapsedRef.current += Math.min((now - previous) / 1000, 0.5);
+      previous = now;
+      if (elapsedRef.current >= duration) {
+        if (!completed.current) {
+          completed.current = true;
+          onComplete.current();
         }
-        if (next >= durationSec) {
-          return 0;
-        }
-        return next;
-      });
-    }, 250);
-
-    return () => clearInterval(interval);
-  }, [isActive, paused, durationSec, isWatchedComplete, onWatchComplete]);
-
-  const triggerHeartBurst = () => {
-    heartBurst.setValue(0);
-    Animated.sequence([
-      Animated.spring(heartBurst, { toValue: 1, friction: 4, useNativeDriver: false }),
-      Animated.timing(heartBurst, { toValue: 0, duration: 260, useNativeDriver: false }),
-    ]).start();
-  };
-
-  const handleVideoTap = () => {
-    const now = Date.now();
-    if (now - lastTapRef.current < 280) {
-      if (!isSaved) onSave();
-      triggerHeartBurst();
-    } else {
-      setPaused((prev) => !prev);
-    }
-    lastTapRef.current = now;
-  };
-
-  const fastForwardReel = () => {
-    setElapsedSec((prev) => {
-      const next = Math.min(durationSec, prev + Math.ceil(durationSec * 0.5));
-      if (next >= durationSec * 0.85 && !isWatchedComplete) {
-        onWatchComplete();
+        elapsedRef.current = 0;
       }
-      return next >= durationSec ? 0 : next;
-    });
+      setElapsed(elapsedRef.current);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [playing, duration]);
+
+  useEffect(() => {
+    if (!playing || reduceMotion) return;
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(zoom, {
+          toValue: 1.045,
+          duration: 14000,
+          useNativeDriver: Platform.OS !== 'web',
+          isInteraction: false,
+        }),
+        Animated.timing(zoom, {
+          toValue: 1,
+          duration: 14000,
+          useNativeDriver: Platform.OS !== 'web',
+          isInteraction: false,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [playing, reduceMotion, zoom]);
+
+  const like = () => {
+    if (!isSaved && !reduceMotion) {
+      burst.setValue(1);
+      Animated.timing(burst, { toValue: 0, duration: 700, useNativeDriver: Platform.OS !== 'web' }).start();
+    }
+    onSave();
   };
 
-  const responder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dx) > 14 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.4,
-        onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
-        onPanResponderRelease: (_, gesture) => {
-          if (gesture.dx > SWIPE_THRESHOLD) {
-            fling(1, () => {
-              onSave();
-              triggerHeartBurst();
-            });
-          } else if (gesture.dx < -SWIPE_THRESHOLD) {
-            fling(-1, onSkip);
-          } else {
-            Animated.spring(pan, { toValue: { x: 0, y: 0 }, friction: 6, useNativeDriver: false }).start();
-          }
-        },
-        onPanResponderTerminate: () => {
-          Animated.spring(pan, { toValue: { x: 0, y: 0 }, friction: 6, useNativeDriver: false }).start();
-        },
-      }),
-    [pan, onSave, onSkip],
-  );
-
-  const fling = (direction: 1 | -1, done: () => void) => {
-    Animated.timing(pan, {
-      toValue: { x: direction * width * 0.55, y: 0 },
-      duration: 180,
-      useNativeDriver: false,
-    }).start(() => {
-      done();
-      pan.setValue({ x: 0, y: 0 });
-    });
+  const tap = () => {
+    if (tapTimer.current) {
+      clearTimeout(tapTimer.current);
+      tapTimer.current = null;
+      if (!isSaved) like();
+    } else {
+      tapTimer.current = setTimeout(() => {
+        setPaused((value) => !value);
+        tapTimer.current = null;
+      }, 240);
+    }
   };
 
-  const kindMeta = KIND_BADGE[dish.reelKind];
-  const handle = `@${merchant.name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_|_$/g, '')}`;
-
-  const heartScale = heartBurst.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1.25] });
+  const offer = dish.promoOriginalPrice && dish.promoOriginalPrice > dish.price;
 
   return (
-    <Animated.View {...responder.panHandlers} style={[styles.reelContainer, { transform: [{ translateX: pan.x }] }]}>
-      <Pressable style={styles.mediaPressable} onPress={handleVideoTap}>
-        <Animated.View style={[styles.mediaWrap, { transform: [{ scale: zoom }] }]}>
-          <LinearGradient
-            colors={item.media.fallback}
+    <View style={styles.root} testID={`reel-${dish.id}`}>
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPress={tap}
+        accessibilityRole="button"
+        accessibilityLabel={paused ? 'Reproduzir slide' : 'Pausar slide'}
+      >
+        <Animated.View style={[StyleSheet.absoluteFill, { transform: [{ scale: zoom }] }]}>
+          <Image
+            source={dishArtwork(dish)}
             style={StyleSheet.absoluteFill}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
+            contentFit="cover"
+            contentPosition="center"
+            onLoad={() => setReady(true)}
+            accessibilityLabel={`Foto ilustrativa de ${merchant.cuisine.toLowerCase()}`}
           />
-          {mediaFailed ? (
-            <View style={styles.emojiFallback}>
-              <Text style={styles.emojiLarge}>{dish.emoji}</Text>
-            </View>
-          ) : (
-            <Image
-              source={{ uri: item.media.url }}
-              style={StyleSheet.absoluteFill}
-              contentFit="cover"
-              transition={180}
-              onError={() => setMediaFailed(true)}
-            />
-          )}
         </Animated.View>
-
         <LinearGradient
-          colors={['rgba(0,0,0,0.62)', 'rgba(0,0,0,0.04)', 'rgba(0,0,0,0.45)', 'rgba(0,0,0,0.92)']}
-          locations={[0, 0.28, 0.62, 1]}
+          colors={['rgba(16, 6, 6, 0.34)', 'transparent', 'rgba(18, 6, 6, 0.22)', 'rgba(14, 6, 6, 0.96)']}
+          locations={[0, 0.28, 0.5, 1]}
           style={StyleSheet.absoluteFill}
-          pointerEvents="none"
         />
-
-        <Animated.View
-          pointerEvents="none"
-          style={[styles.centerHeartWrap, { opacity: heartBurst, transform: [{ scale: heartScale }] }]}
-        >
-          <Text style={styles.centerHeart}>♥</Text>
+        <Animated.View style={[styles.burst, { opacity: burst }]} pointerEvents="none">
+          <Heart size={82} fill={colors.accent} color={colors.accent} strokeWidth={1} />
         </Animated.View>
-
-        {paused ? (
-          <View style={styles.pauseOverlay} pointerEvents="none">
-            <Text style={styles.pauseIcon}>▶</Text>
-            <Text style={styles.pauseLabel}>Toque para continuar o Reel</Text>
-          </View>
-        ) : null}
       </Pressable>
 
-      {/* Pill de tempo do Reel (máx 60s) + avanço rápido para testar algoritmo */}
-      <View style={styles.reelMetaBar} pointerEvents="box-none">
-        <View style={styles.timerPill}>
-          <View style={[styles.liveDot, isWatchedComplete && { backgroundColor: colors.success }]} />
-          <Text style={styles.timerText}>
-            {formatTimer(elapsedSec)} / {formatTimer(durationSec)} (máx 60s)
+      <View style={styles.top} pointerEvents="box-none">
+        <View style={[styles.editorialTag, offer ? styles.offerTag : null]}>
+          <View style={[styles.liveDot, offer ? { backgroundColor: colors.gold } : null]} />
+          <Text style={styles.tagText}>
+            {offer ? 'OFERTA QUENTE' : dish.reelKind === 'bastidores' ? 'DIRETO DA COZINHA' : 'DESCOBERTA DO DIA'}
           </Text>
-          {isWatchedComplete ? <Text style={styles.watchedBadge}>✓ visto completo</Text> : null}
         </View>
-        <Pressable style={styles.ffButton} onPress={fastForwardReel}>
-          <Text style={styles.ffButtonText}>⏩ +50% vídeo</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={paused ? 'Continuar reprodução' : 'Pausar reprodução'}
+          onPress={() => setPaused((v) => !v)}
+          style={styles.playControl}
+        >
+          {paused ? <Play size={12} color="white" fill="white" /> : <Pause size={12} color="white" />}
+          <Text style={styles.time}>
+            SLIDE · {String(Math.floor(duration / 60))}:{String(duration % 60).padStart(2, '0')}
+          </Text>
         </Pressable>
       </View>
 
-      {/* Coluna vertical direita idêntica ao TikTok / Instagram Reels */}
-      <View style={styles.rightRail} pointerEvents="box-none">
-        <Pressable style={styles.avatarWrap} onPress={onWhy} accessibilityLabel="Ver loja e algoritmo">
-          <LinearGradient colors={item.media.fallback} style={styles.avatarCircle}>
-            <Text style={styles.avatarEmoji}>{merchant.emoji}</Text>
-          </LinearGradient>
-          <View style={styles.avatarPlus}>
-            <Text style={styles.avatarPlusText}>+</Text>
-          </View>
+      <View style={[styles.rail, compact && { bottom: 166, gap: 3 }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: isSaved }}
+          accessibilityLabel={isSaved ? 'Descurtir prato' : 'Curtir prato'}
+          onPress={like}
+          style={({ pressed }) => [styles.railButton, isSaved && styles.liked, pressed && styles.pressed]}
+        >
+          <Heart
+            size={25}
+            strokeWidth={1.8}
+            color={isSaved ? colors.white : 'white'}
+            fill={isSaved ? colors.accent : 'transparent'}
+          />
         </Pressable>
+        <Text style={styles.railCaption}>{isSaved ? 'Curtido' : 'Curtir'}</Text>
 
         <Pressable
-          style={styles.railAction}
-          onPress={() => {
-            onSave();
-            triggerHeartBurst();
-          }}
-          accessibilityLabel="Curtir Reel"
+          accessibilityRole="button"
+          accessibilityLabel="Adicionar ao carrinho"
+          onPress={cartQty > 0 ? onOpenCart : onAdd}
+          style={({ pressed }) => [styles.railButton, cartQty > 0 && styles.railCartActive, pressed && styles.pressed]}
         >
-          <View style={[styles.railIconCircle, isSaved && styles.railIconLiked]}>
-            <Text style={[styles.railIcon, isSaved && styles.railIconLikedText]}>♥</Text>
-          </View>
-          <Text style={styles.railCount}>{formatLikes(dish.likesCount + (isSaved ? 1 : 0))}</Text>
-        </Pressable>
-
-        <Pressable style={styles.railAction} onPress={onAdd} accessibilityLabel="Adicionar ao carrinho">
-          <View style={[styles.railIconCircle, cartQty > 0 && styles.railIconCartActive]}>
-            <Text style={styles.railIcon}>🛒</Text>
-            {cartQty > 0 ? (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>{cartQty}</Text>
-              </View>
-            ) : null}
-          </View>
-          <Text style={styles.railCount}>Pedir</Text>
-        </Pressable>
-
-        <Pressable style={styles.railAction} onPress={onWhy} accessibilityLabel="Ver algoritmo">
-          <View style={styles.railIconCircle}>
-            <Text style={styles.railScore}>{Math.round(item.score * 100)}%</Text>
-          </View>
-          <Text style={styles.railCount}>Match</Text>
-        </Pressable>
-
-        <Pressable style={styles.railAction} onPress={onSkip} accessibilityLabel="Não tenho interesse">
-          <View style={styles.railIconCircle}>
-            <Text style={styles.railIcon}>✕</Text>
-          </View>
-          <Text style={styles.railCount}>Pular</Text>
-        </Pressable>
-      </View>
-
-      {/* Rodapé estilo TikTok / Reels: @loja, tipo de post, hook, tags, CTA de pedido e barra de progresso */}
-      <View style={styles.bottomCaption} pointerEvents="box-none">
-        <View style={styles.kindRow}>
-          <View style={[styles.kindPill, { backgroundColor: kindMeta.bg }]}>
-            <Text style={[styles.kindPillText, { color: kindMeta.color }]}>{kindMeta.label}</Text>
-          </View>
-          {dish.isNew ? (
-            <View style={styles.newPill}>
-              <Text style={styles.newPillText}>NOVO</Text>
+          <ShoppingBag size={23} strokeWidth={1.8} color="white" />
+          {cartQty > 0 && (
+            <View style={styles.counter}>
+              <Text style={styles.counterText}>{cartQty}</Text>
             </View>
-          ) : null}
+          )}
+        </Pressable>
+        <Text style={styles.railCaption}>{cartQty > 0 ? 'Sacola' : 'Pedir'}</Text>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Detalhes do prato"
+          onPress={onWhy}
+          style={styles.infoButton}
+        >
+          <Info size={22} color="white" strokeWidth={1.6} />
+        </Pressable>
+      </View>
+
+      <View style={styles.bottom} pointerEvents="box-none">
+        <View style={styles.copy} pointerEvents="none">
+          <View style={styles.merchant}>
+            <View style={styles.avatar}>
+              <Text style={styles.initials}>{merchantInitials(merchant)}</Text>
+            </View>
+            <Text numberOfLines={1} style={styles.merchantName}>
+              {merchant.name}
+            </Text>
+          </View>
+          <Text style={[styles.title, compact && { fontSize: 26, lineHeight: 30 }]} numberOfLines={compact ? 1 : 2}>
+            {dish.name}
+          </Text>
+          <Text style={[styles.description, compact && { marginTop: 6 }]} numberOfLines={compact ? 1 : 2}>
+            {dish.description}
+          </Text>
+          <View style={styles.meta}>
+            <Star size={13} color={colors.gold} fill={colors.gold} />
+            <Text style={styles.metaText}>{merchant.rating.toFixed(1)}</Text>
+            <View style={styles.dot} />
+            <Clock3 size={13} color="#F2DFDA" />
+            <Text style={styles.metaText}>{merchant.etaMin} min</Text>
+            <View style={styles.dot} />
+            <Text style={styles.metaText}>{merchant.distanceKm.toFixed(1)} km</Text>
+          </View>
         </View>
 
-        <Text style={styles.handleText} numberOfLines={1}>
-          {handle} <Text style={styles.handleMeta}>· ★ {merchant.rating.toFixed(1)} · ⏱ {merchant.etaMin} min · {merchant.distanceKm.toFixed(1)} km</Text>
-        </Text>
-
-        <Text style={styles.dishTitle}>{dish.name}</Text>
-        <Text style={styles.hookText} numberOfLines={2}>
-          {dish.hook} — <Text style={styles.descInline}>{dish.description}</Text>
-        </Text>
-
-        <Text style={styles.hashtags} numberOfLines={1}>
-          {dish.tags.map((tag) => `#${tag}`).join('  ')}  #{merchant.cuisine.toLowerCase()}
-        </Text>
-
-        <View style={styles.orderStrip}>
-          <View style={styles.priceBox}>
-            {dish.promoOriginalPrice ? (
-              <Text style={styles.oldPrice}>de {formatBRL(dish.promoOriginalPrice)}</Text>
+        <View style={[styles.orderRow, compact && { marginTop: 12 }]}>
+          <View>
+            {offer ? (
+              <Text style={styles.oldPrice}>de {formatBRL(dish.promoOriginalPrice!)}</Text>
             ) : (
-              <Text style={styles.deliveryHint}>entrega {formatBRL(merchant.deliveryFee)}</Text>
+              <Text style={styles.priceCaption}>PEDIR AGORA</Text>
             )}
-            <Text style={styles.priceNow}>{formatBRL(dish.price)}</Text>
+            <Text style={styles.price}>{formatBRL(dish.price)}</Text>
           </View>
 
-          <Pressable style={styles.orderCta} onPress={onAdd}>
-            <Text style={styles.orderCtaText}>
-              {cartQty > 0 ? `🛒 No carrinho (${cartQty}) · +1` : '🛒 Fazer pedido agora'}
-            </Text>
-          </Pressable>
+          <View style={styles.ctaGroup}>
+            {cartQty > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Ver sacola e fazer checkout"
+                onPress={onOpenCart}
+                style={({ pressed }) => [styles.bagShortcutBtn, pressed && styles.pressed]}
+              >
+                <ShoppingBag size={16} color={colors.white} />
+                <Text style={styles.bagShortcutText}>Finalizar ({cartQty})</Text>
+              </Pressable>
+            ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Pedir ${dish.name}`}
+              onPress={onAdd}
+              style={({ pressed }) => [styles.orderButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.orderText}>{cartQty > 0 ? '+1 item' : 'Quero esse'}</Text>
+              <ArrowUpRight size={20} color={colors.onAccent} />
+            </Pressable>
+          </View>
         </View>
 
-        <View style={styles.audioRow}>
-          <Text style={styles.audioText} numberOfLines={1}>
-            ♪ {dish.audioTrack} · dê duplo-toque para ♥
-          </Text>
+        <View style={styles.bottomLine}>
+          <Text style={styles.delivery}>Entrega {formatBRL(merchant.deliveryFee)}</Text>
+          <Text style={styles.position}>{position}</Text>
         </View>
       </View>
 
-      {/* Barra de progresso fininha na base do Reel (estilo TikTok/Reels) */}
-      <View style={styles.progressTrack} pointerEvents="none">
-        <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%` }]} />
+      <View style={styles.track}>
+        <View style={[styles.progress, { width: `${(elapsed / duration) * 100}%` }]} />
       </View>
-    </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  reelContainer: {
-    flex: 1,
-    backgroundColor: '#050508',
-    overflow: 'hidden',
-  },
-  mediaPressable: {
+  root: { flex: 1, backgroundColor: colors.surface, overflow: 'hidden' },
+  top: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  mediaWrap: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  emojiFallback: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emojiLarge: {
-    fontSize: 120,
-  },
-  centerHeartWrap: {
-    position: 'absolute',
-    top: '38%',
-    alignSelf: 'center',
-  },
-  centerHeart: {
-    fontSize: 112,
-    color: '#FF2D55',
-    textShadowColor: 'rgba(0,0,0,0.55)',
-    textShadowOffset: { width: 0, height: 6 },
-    textShadowRadius: 16,
-  },
-  pauseOverlay: {
-    position: 'absolute',
-    top: '42%',
-    alignSelf: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: radius.lg,
-  },
-  pauseIcon: { color: colors.white, fontSize: 34, fontWeight: '900' },
-  pauseLabel: { color: colors.textMuted, fontSize: font.micro, marginTop: 4 },
-  reelMetaBar: {
-    position: 'absolute',
-    top: 86,
-    left: spacing.md,
-    right: spacing.md,
+    top: 22,
+    left: 22,
+    right: 22,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    gap: 8,
   },
-  timerPill: {
+  editorialTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(24, 10, 10, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 29, 44, 0.45)',
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  offerTag: {
+    backgroundColor: 'rgba(234, 29, 44, 0.88)',
+    borderColor: 'rgba(255, 184, 0, 0.65)',
+  },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  tagText: { color: colors.text, fontFamily: face.bold, fontSize: 8, letterSpacing: 1.25 },
+  playControl: {
+    minHeight: 36,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.55)',
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 9,
+    backgroundColor: 'rgba(24, 10, 10, 0.62)',
   },
-  liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#FF2D55',
-  },
-  timerText: { color: colors.white, fontSize: 11, fontWeight: '800' },
-  watchedBadge: { color: colors.success, fontSize: 10, fontWeight: '900' },
-  ffButton: {
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-  },
-  ffButtonText: { color: colors.white, fontSize: 11, fontWeight: '700' },
-  rightRail: {
-    position: 'absolute',
-    right: 12,
-    bottom: 92,
-    alignItems: 'center',
-    gap: 16,
-  },
-  avatarWrap: {
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  avatarCircle: {
+  time: { fontFamily: face.semibold, color: 'white', fontSize: 9, letterSpacing: 0.6 },
+  burst: { position: 'absolute', top: '35%', alignSelf: 'center' },
+  rail: { position: 'absolute', right: 20, bottom: 204, alignItems: 'center', gap: 6, zIndex: 2 },
+  railButton: {
     width: 50,
     height: 50,
     borderRadius: 25,
-    borderWidth: 2,
-    borderColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatarEmoji: { fontSize: 24 },
-  avatarPlus: {
-    marginTop: -10,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#FF2D55',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarPlusText: { color: colors.white, fontSize: 13, fontWeight: '900', lineHeight: 15 },
-  railAction: {
-    alignItems: 'center',
-    gap: 3,
-  },
-  railIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(15,15,22,0.68)',
+    backgroundColor: 'rgba(26, 12, 12, 0.64)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
+    borderColor: 'rgba(255,255,255,0.24)',
+  },
+  liked: { borderColor: colors.accent, backgroundColor: 'rgba(234, 29, 44, 0.28)' },
+  railCartActive: { borderColor: colors.gold, backgroundColor: 'rgba(234, 29, 44, 0.88)' },
+  railCaption: { color: 'white', fontFamily: face.semibold, fontSize: 10, marginBottom: 9 },
+  infoButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  counter: {
+    position: 'absolute',
+    top: -3,
+    right: -4,
+    backgroundColor: colors.gold,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  railIconLiked: {
-    backgroundColor: 'rgba(255,45,85,0.24)',
-    borderColor: '#FF2D55',
-  },
-  railIconCartActive: {
-    backgroundColor: 'rgba(52,211,153,0.24)',
-    borderColor: colors.success,
-  },
-  railIcon: { color: colors.white, fontSize: 22, fontWeight: '800' },
-  railIconLikedText: { color: '#FF2D55' },
-  railScore: { color: colors.gold, fontSize: 13, fontWeight: '900' },
-  railCount: {
-    color: colors.white,
-    fontSize: 11,
-    fontWeight: '700',
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  cartBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    minWidth: 18,
-    height: 18,
+  counterText: { color: '#1A0B0B', fontFamily: face.display, fontSize: 10 },
+  bottom: { position: 'absolute', bottom: 20, left: 24, right: 24 },
+  copy: { paddingRight: 56 },
+  merchant: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  avatar: {
+    width: 28,
+    height: 28,
     borderRadius: 9,
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
   },
-  cartBadgeText: { color: colors.white, fontSize: 10, fontWeight: '900' },
-  bottomCaption: {
-    position: 'absolute',
-    left: spacing.md,
-    right: 78,
-    bottom: 16,
-    gap: 5,
-  },
-  kindRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  kindPill: {
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-  },
-  kindPillText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.4 },
-  newPill: {
-    backgroundColor: 'rgba(255,200,87,0.22)',
+  initials: { fontFamily: face.display, fontSize: 10, color: colors.white },
+  merchantName: { color: '#F7E7E4', fontFamily: face.semibold, fontSize: 12, flexShrink: 1 },
+  title: { fontFamily: face.display, fontSize: 34, lineHeight: 38, letterSpacing: -1.2, color: colors.text },
+  description: { fontFamily: face.regular, fontSize: 12, lineHeight: 19, color: '#E6D2CE', marginTop: 8 },
+  meta: { flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: 12 },
+  metaText: { fontFamily: face.medium, color: '#F2DFDA', fontSize: 11 },
+  dot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#B89A94', marginHorizontal: 3 },
+  orderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, gap: 10 },
+  priceCaption: { fontFamily: face.bold, fontSize: 8, color: colors.gold, letterSpacing: 1.1 },
+  price: { color: colors.text, fontFamily: face.display, fontSize: 26, letterSpacing: -0.9, marginTop: 2 },
+  oldPrice: { color: '#D1B3AE', textDecorationLine: 'line-through', fontFamily: face.medium, fontSize: 11 },
+  ctaGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bagShortcutBtn: {
+    borderRadius: 15,
+    minHeight: 50,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(24, 12, 12, 0.88)',
     borderWidth: 1,
     borderColor: colors.gold,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-  },
-  newPillText: { color: colors.gold, fontSize: 10, fontWeight: '900' },
-  handleText: { color: colors.white, fontSize: font.body, fontWeight: '800' },
-  handleMeta: { color: colors.textMuted, fontSize: font.micro, fontWeight: '600' },
-  dishTitle: {
-    color: colors.white,
-    fontSize: font.h2,
-    fontWeight: '900',
-    letterSpacing: -0.5,
-  },
-  hookText: { color: '#F3F3F7', fontSize: font.small, fontWeight: '700', lineHeight: 18 },
-  descInline: { color: colors.textMuted, fontWeight: '500' },
-  hashtags: { color: colors.gold, fontSize: font.micro, fontWeight: '700' },
-  orderStrip: {
-    marginTop: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(15,15,22,0.82)',
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.16)',
-    gap: spacing.sm,
+    gap: 7,
   },
-  priceBox: {},
-  oldPrice: { color: colors.textFaint, fontSize: 10, textDecorationLine: 'line-through' },
-  deliveryHint: { color: colors.textMuted, fontSize: 10 },
-  priceNow: { color: colors.white, fontSize: font.h3, fontWeight: '900' },
-  orderCta: {
+  bagShortcutText: { fontFamily: face.bold, color: colors.gold, fontSize: 12 },
+  orderButton: {
+    borderRadius: 15,
+    minHeight: 50,
+    paddingHorizontal: 19,
     backgroundColor: colors.accent,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 9,
-    borderRadius: radius.pill,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-  orderCtaText: { color: colors.white, fontSize: font.small, fontWeight: '900' },
-  audioRow: { marginTop: 2 },
-  audioText: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
-  progressTrack: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#FF2D55',
-  },
+  orderText: { fontFamily: face.bold, color: colors.onAccent, fontSize: 13 },
+  pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
+  bottomLine: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
+  delivery: { color: '#C7ACA7', fontFamily: face.medium, fontSize: 10 },
+  position: { color: '#C7ACA7', fontFamily: face.medium, fontSize: 10, letterSpacing: 2 },
+  track: { position: 'absolute', bottom: 0, height: 3, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.18)' },
+  progress: { backgroundColor: colors.accent, height: 3 },
 });

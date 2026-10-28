@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { colors, font, radius, spacing } from '../theme';
+import { colors, face, font, radius, spacing } from '../theme';
 
 export function Badge({
   label,
@@ -83,6 +83,7 @@ export function Button({
       <Text
         style={[
           styles.buttonText,
+          variant === 'primary' && { color: colors.onAccent },
           compact && { fontSize: font.small },
           variant === 'outline' && { color: colors.text },
           variant === 'ghost' && { color: colors.textMuted },
@@ -137,11 +138,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   buttonText: {
+    fontFamily: face.bold,
     color: colors.white,
     fontSize: font.body,
     fontWeight: '700',
   },
   sectionLabel: {
+    fontFamily: face.semibold,
     color: colors.textFaint,
     fontSize: font.micro,
     fontWeight: '700',

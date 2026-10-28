@@ -2,13 +2,14 @@
   "expo": {
     "name": "Prato a Prato",
     "slug": "prato-a-prato",
+    "icon": "./assets/brand/icon.png",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#0B0B0F",
+    "backgroundColor": "#0E0808",
     "newArchEnabled": true,
     "splash": {
-      "backgroundColor": "#0B0B0F",
+      "backgroundColor": "#0E0808",
       "resizeMode": "contain"
     },
     "ios": {
@@ -19,9 +20,13 @@
       "package": "com.pratoaprato.app"
     },
     "web": {
+      "favicon": "./assets/brand/icon.png",
       "bundler": "metro",
       "output": "single"
     },
-    "plugins": ["expo-image"]
+    "plugins": [
+      "expo-image",
+      "expo-font"
+    ]
   }
 }

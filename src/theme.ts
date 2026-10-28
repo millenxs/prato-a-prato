@@ -1,20 +1,29 @@
 export const colors = {
-  bg: '#0B0B0F',
-  surface: '#15151C',
-  surfaceRaised: '#1D1D26',
-  border: '#2A2A36',
-  text: '#F5F5F7',
-  textMuted: '#A0A0B0',
-  textFaint: '#6E6E80',
-  accent: '#FF5A36',
-  accentSoft: 'rgba(255, 90, 54, 0.16)',
-  gold: '#FFC857',
+  bg: '#0E0808',
+  surface: '#181010',
+  surfaceRaised: '#241717',
+  border: '#382323',
+  text: '#FFF8F5',
+  textMuted: '#D1BDB8',
+  textFaint: '#9E8580',
+  accent: '#EA1D2C',
+  accentSoft: 'rgba(234, 29, 44, 0.16)',
+  onAccent: '#FFFFFF',
+  gold: '#FFB800',
   success: '#34D399',
   successSoft: 'rgba(52, 211, 153, 0.14)',
   danger: '#F87171',
   dangerSoft: 'rgba(248, 113, 113, 0.14)',
-  overlay: 'rgba(6, 6, 10, 0.72)',
+  overlay: 'rgba(12, 6, 6, 0.78)',
   white: '#FFFFFF',
+} as const;
+
+export const face = {
+  regular: 'Manrope_400Regular',
+  medium: 'Manrope_500Medium',
+  semibold: 'Manrope_600SemiBold',
+  bold: 'Manrope_700Bold',
+  display: 'Manrope_800ExtraBold',
 } as const;
 
 export const spacing = {

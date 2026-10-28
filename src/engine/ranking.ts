@@ -52,7 +52,7 @@ function mulberry32(seed: number): () => number {
 
 export function relevanceOf(dish: Dish, profile: Record<string, number>): number {
   const merchant = merchantById.get(dish.merchantId);
-  const keys = merchant ? [...dish.tags, merchant.cuisine.toLowerCase()] : dish.tags;
+  const keys = [...new Set(merchant ? [...dish.tags, merchant.cuisine.toLowerCase()] : dish.tags)];
   if (keys.length === 0) return 0.5;
   let sum = 0;
   for (const tag of keys) sum += profile[tag] ?? 0;
@@ -255,7 +255,7 @@ export function updateProfile(
 ): Record<string, number> {
   const delta = SIGNAL_DELTA[signal];
   const merchant = merchantById.get(dish.merchantId);
-  const keys = merchant ? [...dish.tags, merchant.cuisine.toLowerCase()] : dish.tags;
+  const keys = [...new Set(merchant ? [...dish.tags, merchant.cuisine.toLowerCase()] : dish.tags)];
   const next = { ...profile };
   for (const tag of keys) {
     next[tag] = Math.max(-1, Math.min(1, (next[tag] ?? 0) + delta));

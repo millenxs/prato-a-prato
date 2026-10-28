@@ -26,6 +26,7 @@ export interface AppState {
   lab: LabConfig;
   seed: number;
   feed: BuildFeedResult;
+  activeDishId: string | null;
   profile: Record<string, number>;
   seenMerchant: Record<string, number>;
   savedIds: string[];
@@ -51,6 +52,7 @@ export interface AppState {
 }
 
 type Action =
+  | { type: 'focus'; dishId: string }
   | { type: 'impression'; at: number; dishId: string; merchantId: string }
   | { type: 'watchComplete'; at: number; dishId: string }
   | { type: 'skip'; at: number; dishId: string }
@@ -80,6 +82,7 @@ export function createInitialState(now: number = Date.now()): AppState {
     lab: defaultLab,
     seed: 1,
     feed,
+    activeDishId: feed.items[0]?.dish.id ?? null,
     profile: {},
     seenMerchant: {},
     savedIds: [],
@@ -106,7 +109,11 @@ export function createInitialState(now: number = Date.now()): AppState {
 }
 
 function reducer(state: AppState, action: Action): AppState {
+  // A posição visível pode diferir da contagem de impressões (filtros e retorno).
+  const lockedCount = Math.max(0, state.feed.items.findIndex((item) => item.dish.id === state.activeDishId) + 1);
   switch (action.type) {
+    case 'focus':
+      return state.activeDishId === action.dishId ? state : { ...state, activeDishId: action.dishId };
     case 'impression': {
       const dish = dishById.get(action.dishId);
       if (!dish) return state;
@@ -133,7 +140,7 @@ function reducer(state: AppState, action: Action): AppState {
       const dish = dishById.get(action.dishId);
       if (!dish || state.watchedCompleteIds.includes(action.dishId)) return state;
       const profile = updateProfile(state.profile, dish, 'watch_complete');
-      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const feed = rerankUpcoming(state.feed, lockedCount, state.lab, profile);
       const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
       return {
         ...state,
@@ -154,7 +161,7 @@ function reducer(state: AppState, action: Action): AppState {
       const dish = dishById.get(action.dishId);
       if (!dish) return state;
       const profile = updateProfile(state.profile, dish, 'skip');
-      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const feed = rerankUpcoming(state.feed, lockedCount, state.lab, profile);
       const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
       return {
         ...state,
@@ -170,7 +177,7 @@ function reducer(state: AppState, action: Action): AppState {
       const dish = dishById.get(action.dishId);
       if (!dish || state.savedIds.includes(action.dishId)) return state;
       const profile = updateProfile(state.profile, dish, 'save');
-      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const feed = rerankUpcoming(state.feed, lockedCount, state.lab, profile);
       const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
       return {
         ...state,
@@ -186,7 +193,7 @@ function reducer(state: AppState, action: Action): AppState {
       const dish = dishById.get(action.dishId);
       if (!dish) return state;
       const profile = updateProfile(state.profile, dish, 'skip');
-      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const feed = rerankUpcoming(state.feed, lockedCount, state.lab, profile);
       return {
         ...state,
         saves: Math.max(0, state.saves - 1),
@@ -206,7 +213,7 @@ function reducer(state: AppState, action: Action): AppState {
           )
         : [...state.cart, { dishId: action.dishId, qty: 1 }];
       const profile = updateProfile(state.profile, dish, 'add');
-      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const feed = rerankUpcoming(state.feed, lockedCount, state.lab, profile);
       const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
       return {
         ...state,
@@ -341,6 +348,7 @@ interface StoreValue {
   cartItems: Array<{ dishId: string; name: string; emoji: string; qty: number; price: number; merchantName: string }>;
   cartTotal: number;
   actions: {
+    focus: (dishId: string) => void;
     impression: (dishId: string, merchantId: string) => void;
     watchComplete: (dishId: string) => void;
     skip: (dishId: string) => void;
@@ -433,6 +441,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const actions = useMemo(
     () => ({
+      focus: (dishId: string) => dispatch({ type: 'focus', dishId }),
       impression: (dishId: string, merchantId: string) =>
         dispatch({ type: 'impression', at: Date.now(), dishId, merchantId }),
       watchComplete: (dishId: string) => dispatch({ type: 'watchComplete', at: Date.now(), dishId }),

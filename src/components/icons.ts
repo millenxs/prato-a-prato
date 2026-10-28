@@ -1,0 +1,25 @@
+// Importação por ícone: evita embarcar o catálogo inteiro no Metro.
+export { default as ArrowDown } from 'lucide-react-native/icons/arrow-down';
+export { default as ArrowUp } from 'lucide-react-native/icons/arrow-up';
+export { default as ArrowLeft } from 'lucide-react-native/icons/arrow-left';
+export { default as ArrowUpRight } from 'lucide-react-native/icons/arrow-up-right';
+export { default as ChartNoAxesCombined } from 'lucide-react-native/icons/chart-no-axes-combined';
+export { default as Check } from 'lucide-react-native/icons/check';
+export { default as ChevronDown } from 'lucide-react-native/icons/chevron-down';
+export { default as Clock3 } from 'lucide-react-native/icons/clock-3';
+export { default as Compass } from 'lucide-react-native/icons/compass';
+export { default as Heart } from 'lucide-react-native/icons/heart';
+export { default as Info } from 'lucide-react-native/icons/info';
+export { default as MapPin } from 'lucide-react-native/icons/map-pin';
+export { default as Minus } from 'lucide-react-native/icons/minus';
+export { default as Pause } from 'lucide-react-native/icons/pause';
+export { default as Play } from 'lucide-react-native/icons/play';
+export { default as Plus } from 'lucide-react-native/icons/plus';
+export { default as ShoppingBag } from 'lucide-react-native/icons/shopping-bag';
+export { default as SlidersHorizontal } from 'lucide-react-native/icons/sliders-horizontal';
+export { default as Sparkles } from 'lucide-react-native/icons/sparkles';
+export { default as Star } from 'lucide-react-native/icons/star';
+export { default as TrendingUp } from 'lucide-react-native/icons/trending-up';
+export { default as UserRound } from 'lucide-react-native/icons/user-round';
+export { default as X } from 'lucide-react-native/icons/x';
+export type { LucideIcon } from 'lucide-react-native';
