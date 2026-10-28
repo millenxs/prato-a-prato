@@ -10,16 +10,16 @@ import { LabScreen } from './screens/LabScreen';
 import { StoreProvider, useStore } from './state/store';
 import { colors, font, spacing } from './theme';
 
-const TOP_PADDING = Platform.select({ android: RNStatusBar.currentHeight ?? 24, default: 52 }) ?? 24;
-const TAB_BAR_HEIGHT = 68;
+const TOP_PADDING = Platform.select({ android: RNStatusBar.currentHeight ?? 24, web: 0, default: 44 }) ?? 0;
+const TAB_BAR_HEIGHT = 64;
 
 type Tab = 'feed' | 'decide' | 'experiment' | 'lab';
 
 const TABS: Array<{ key: Tab; label: string; icon: string }> = [
-  { key: 'feed', label: 'Feed', icon: '🍽' },
+  { key: 'feed', label: 'Reels', icon: '🎬' },
   { key: 'decide', label: 'Decidir', icon: '⚡' },
   { key: 'experiment', label: 'Case A/B', icon: '📊' },
-  { key: 'lab', label: 'Laboratório', icon: '🎛' },
+  { key: 'lab', label: 'Algoritmo', icon: '🧠' },
 ];
 
 function Shell() {
@@ -28,7 +28,7 @@ function Shell() {
   const { height } = useWindowDimensions();
   const { state } = useStore();
 
-  const cardHeight = Math.max(320, height - TOP_PADDING - TAB_BAR_HEIGHT - 8);
+  const cardHeight = Math.max(360, height - TOP_PADDING - TAB_BAR_HEIGHT);
 
   return (
     <View style={styles.root}>

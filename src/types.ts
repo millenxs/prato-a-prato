@@ -12,6 +12,8 @@ export type Cuisine =
   | 'Frutos do Mar'
   | 'Doces';
 
+export type ReelKind = 'prato' | 'promocao' | 'bastidores' | 'combo';
+
 export interface Merchant {
   id: string;
   name: string;
@@ -36,6 +38,18 @@ export interface Dish {
   name: string;
   description: string;
   price: number;
+  /** Preço anterior quando o Reel é uma promoção/oferta relâmpago. */
+  promoOriginalPrice?: number;
+  /** Formato do post no feed estilo Reels/TikTok. */
+  reelKind: ReelKind;
+  /** Duração do slide/vídeo no feed (sempre ≤ 60s). */
+  durationSec: number;
+  /** Gancho curto em destaque no vídeo (estilo legenda de Reels/TikTok). */
+  hook: string;
+  /** Trilha/som exibido no rodapé do Reel. */
+  audioTrack: string;
+  /** Curtidas acumuladas do Reel. */
+  likesCount: number;
   tags: string[];
   /** Margem bruta estimada (0–1). */
   marginPct: number;
@@ -121,6 +135,7 @@ export interface SessionMetrics {
   cardsShown: number;
   skips: number;
   saves: number;
+  watchedComplete: number;
   adds: number;
   skipRate: number;
   saveRate: number;
@@ -131,8 +146,16 @@ export interface SessionMetrics {
   triggersSuppressed: number;
 }
 
+export type ProfileSignal = 'save' | 'watch_complete' | 'add' | 'skip';
+
+export interface TasteEntry {
+  tag: string;
+  score: number;
+}
+
 export type EventName =
   | 'impression'
+  | 'watch_complete'
   | 'skip'
   | 'save'
   | 'unsave'

@@ -8,7 +8,7 @@
  */
 import { dishes, merchantById } from '../src/data/seed';
 import { runExperiment } from '../src/engine/experiment';
-import { buildFeed, defaultLab, updateProfile } from '../src/engine/ranking';
+import { buildFeed, defaultLab, rerankUpcoming, topTasteProfile, updateProfile } from '../src/engine/ranking';
 import { computeMetrics } from '../src/engine/metrics';
 import { evaluateTriggers } from '../src/engine/triggers';
 import type { FeedItem, LabConfig } from '../src/types';
@@ -130,6 +130,26 @@ check(
     (withoutProfile.items.find((i) => i.dish.tags.includes('carne'))?.score ?? 0),
 );
 
+const sampleDish = dishes[0]!;
+const pWatch = updateProfile({}, sampleDish, 'watch_complete');
+const pLike = updateProfile({}, sampleDish, 'save');
+const pCart = updateProfile({}, sampleDish, 'add');
+const pSkip = updateProfile({}, sampleDish, 'skip');
+const firstTag = sampleDish.tags[0]!;
+check(
+  'hierarquia de sinais do algoritmo: carrinho > like > viu completo > 0 > pulo',
+  (pCart[firstTag] ?? 0) > (pLike[firstTag] ?? 0) &&
+    (pLike[firstTag] ?? 0) > (pWatch[firstTag] ?? 0) &&
+    (pWatch[firstTag] ?? 0) > 0 &&
+    (pSkip[firstTag] ?? 0) < 0,
+);
+const reranked = rerankUpcoming(withoutProfile, 2, defaultLab, burgerLover);
+check(
+  'rerankUpcoming mantém o Reel atual travado e reordena os próximos pelo novo perfil',
+  reranked.items[0]?.dish.id === withoutProfile.items[0]?.dish.id &&
+    topTasteProfile(burgerLover).length > 0,
+);
+
 console.log('\n5) Orçamento de atenção');
 
 const triggerBase = {
@@ -198,6 +218,15 @@ console.log('\n7) Sanidade do catálogo');
 check('todo prato aponta para uma loja existente', dishes.every((dish) => merchantById.has(dish.merchantId)));
 check('ids de prato são únicos', new Set(dishes.map((d) => d.id)).size === dishes.length);
 check('preços e margens são plausíveis', dishes.every((d) => d.price > 0 && d.marginPct > 0 && d.marginPct < 1));
+check(
+  'todo Reel tem duração de no máximo 60s e formato válido',
+  dishes.every(
+    (d) =>
+      d.durationSec >= 15 &&
+      d.durationSec <= 60 &&
+      ['prato', 'promocao', 'bastidores', 'combo'].includes(d.reelKind),
+  ),
+);
 
 console.log('\n8) Experimento A/B');
 

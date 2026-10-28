@@ -6,6 +6,7 @@ export interface MetricsInput {
   cardsShown: number;
   skips: number;
   saves: number;
+  watchedComplete?: number;
   adds: number;
   merchantImpressions: Record<string, number>;
   triggersShown: number;
@@ -24,6 +25,7 @@ export function computeMetrics(input: MetricsInput): SessionMetrics {
     cardsShown: input.cardsShown,
     skips: input.skips,
     saves: input.saves,
+    watchedComplete: input.watchedComplete ?? 0,
     adds: input.adds,
     skipRate: input.cardsShown > 0 ? input.skips / input.cardsShown : 0,
     saveRate: input.cardsShown > 0 ? input.saves / input.cardsShown : 0,

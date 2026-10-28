@@ -8,6 +8,8 @@ import type {
   FeedItem,
   LabConfig,
   Merchant,
+  ProfileSignal,
+  TasteEntry,
 } from '../types';
 
 export const defaultLab: LabConfig = {
@@ -49,10 +51,12 @@ function mulberry32(seed: number): () => number {
 }
 
 export function relevanceOf(dish: Dish, profile: Record<string, number>): number {
-  if (dish.tags.length === 0) return 0.5;
+  const merchant = merchantById.get(dish.merchantId);
+  const keys = merchant ? [...dish.tags, merchant.cuisine.toLowerCase()] : dish.tags;
+  if (keys.length === 0) return 0.5;
   let sum = 0;
-  for (const tag of dish.tags) sum += profile[tag] ?? 0;
-  return clamp01(0.5 + (sum / dish.tags.length) * 0.5);
+  for (const tag of keys) sum += profile[tag] ?? 0;
+  return clamp01(0.5 + (sum / keys.length) * 0.5);
 }
 
 export function scoreItem(
@@ -237,15 +241,60 @@ export function fastLane(feed: BuildFeedResult): {
   return { best, fastest, mostWanted };
 }
 
+const SIGNAL_DELTA: Record<ProfileSignal, number> = {
+  add: 0.32,
+  save: 0.22,
+  watch_complete: 0.16,
+  skip: -0.14,
+};
+
 export function updateProfile(
   profile: Record<string, number>,
   dish: Dish,
-  signal: 'save' | 'skip',
+  signal: ProfileSignal,
 ): Record<string, number> {
-  const delta = signal === 'save' ? 0.18 : -0.12;
+  const delta = SIGNAL_DELTA[signal];
+  const merchant = merchantById.get(dish.merchantId);
+  const keys = merchant ? [...dish.tags, merchant.cuisine.toLowerCase()] : dish.tags;
   const next = { ...profile };
-  for (const tag of dish.tags) {
+  for (const tag of keys) {
     next[tag] = Math.max(-1, Math.min(1, (next[tag] ?? 0) + delta));
   }
   return next;
+}
+
+export function topTasteProfile(profile: Record<string, number>, limit = 6): TasteEntry[] {
+  return Object.entries(profile)
+    .filter(([, score]) => Math.abs(score) >= 0.05)
+    .map(([tag, score]) => ({ tag, score }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+/**
+ * Re-ranqueia apenas os Reels que ainda estão abaixo do card atual,
+ * moldando a fila em tempo real sem tirar do lugar o vídeo que o usuário está vendo.
+ */
+export function rerankUpcoming(
+  feed: BuildFeedResult,
+  lockedCount: number,
+  cfg: LabConfig,
+  profile: Record<string, number>,
+): BuildFeedResult {
+  const safeLocked = Math.max(0, Math.min(feed.items.length, lockedCount));
+  const head = feed.items.slice(0, safeLocked).map((item) => {
+    const { score, factors } = scoreItem(item.dish, item.merchant, cfg, profile);
+    return { ...item, score, factors };
+  });
+  const tail = feed.items
+    .slice(safeLocked)
+    .map((item) => {
+      const { score, factors } = scoreItem(item.dish, item.merchant, cfg, profile);
+      return { ...item, score, factors };
+    })
+    .sort((a, b) => b.score - a.score);
+  return {
+    ...feed,
+    items: [...head, ...tail],
+  };
 }

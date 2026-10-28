@@ -1,4 +1,4 @@
-import type { Dish, Media, Merchant } from '../types';
+import type { Dish, Media, Merchant, ReelKind } from '../types';
 
 /**
  * Dados de demonstração. Nada aqui é real: preços, margens e pedidos são
@@ -201,6 +201,32 @@ const M = Object.fromEntries(merchants.map((m) => [m.id, m]));
 
 const accentOf = (merchantId: string): [string, string] => M[merchantId]?.accent ?? ['#15151C', '#2A2A36'];
 
+const REEL_KINDS: ReelKind[] = ['prato', 'promocao', 'bastidores', 'combo'];
+const DURATIONS = [15, 20, 25, 30, 35, 45, 60] as const;
+
+const HOOKS: Record<ReelKind, string[]> = {
+  prato: [
+    'Feito na hora, saindo fumegando da chapa 🔥',
+    'Close no recheio que derrete na primeira garfada 🤤',
+    'O campeão de pedidos hoje em Petrolina ⭐',
+  ],
+  promocao: [
+    'OFERTA RELÂMPAGO só neste Reel (até acabar o lote!) ⚡',
+    'Desconto direto do restaurante pra fechar pedido agora 🏷️',
+    'Preço especial liberado no feed por tempo limitado 🔥',
+  ],
+  bastidores: [
+    'Bastidores da cozinha: veja como preparamos em 30s 👨‍🍳',
+    'Segredo da receita artesanal gravado agora na cozinha 🎬',
+    'Da grelha direto pra embalagem térmica sem perder crocância ✨',
+  ],
+  combo: [
+    'Combo completo pra matar a fome sem pensar duas vezes 🎯',
+    'Mais pedido pra dividir (ou comer sozinho sem culpa) 😋',
+    'Prato + acompanhamento com vantagem no Reel 🎁',
+  ],
+};
+
 const dish = (
   id: string,
   merchantId: string,
@@ -210,25 +236,51 @@ const dish = (
   tags: string[],
   marginPct: number,
   ordersToday: number,
-  options: Partial<Pick<Dish, 'available' | 'isNew' | 'prepMin'>> & {
+  options: Partial<Pick<Dish, 'available' | 'isNew' | 'prepMin' | 'reelKind' | 'durationSec' | 'promoOriginalPrice' | 'hook'>> & {
     media: [keyword: string, lock: number];
     emoji: string;
   },
-): Dish => ({
-  id,
-  merchantId,
-  name,
-  description,
-  price,
-  tags,
-  marginPct,
-  ordersToday,
-  available: options.available ?? true,
-  isNew: options.isNew ?? false,
-  prepMin: options.prepMin ?? 15,
-  media: img(options.media[0], options.media[1], accentOf(merchantId)),
-  emoji: options.emoji,
-});
+): Dish => {
+  const num = Number(id.replace(/\D/g, '')) || 1;
+  const merchant = M[merchantId];
+  const reelKind: ReelKind =
+    options.reelKind ??
+    (tags.includes('combo') ? 'combo' : num % 3 === 0 ? 'promocao' : num % 5 === 0 ? 'bastidores' : REEL_KINDS[num % REEL_KINDS.length] ?? 'prato');
+  const durationSec = Math.min(60, Math.max(15, options.durationSec ?? DURATIONS[num % DURATIONS.length] ?? 30));
+  const promoOriginalPrice =
+    options.promoOriginalPrice ??
+    (reelKind === 'promocao' || reelKind === 'combo' ? Math.round(price * 1.24 * 10) / 10 : undefined);
+  const hookPool = HOOKS[reelKind];
+  const hook = options.hook ?? hookPool[num % hookPool.length] ?? description;
+  const enrichedTags = Array.from(
+    new Set([
+      ...tags,
+      ...(reelKind === 'promocao' ? ['promoção'] : reelKind === 'combo' ? ['combo'] : []),
+    ]),
+  );
+
+  return {
+    id,
+    merchantId,
+    name,
+    description,
+    price,
+    promoOriginalPrice,
+    reelKind,
+    durationSec,
+    hook,
+    audioTrack: `Som original · ${merchant?.name ?? 'Restaurante'}`,
+    likesCount: 140 + ordersToday * 11 + num * 17,
+    tags: enrichedTags,
+    marginPct,
+    ordersToday,
+    available: options.available ?? true,
+    isNew: options.isNew ?? false,
+    prepMin: options.prepMin ?? 15,
+    media: img(options.media[0], options.media[1], accentOf(merchantId)),
+    emoji: options.emoji,
+  };
+};
 
 export const dishes: Dish[] = [
   dish('d01', 'm1', 'X-Velho Chico', 'Blend 160g, queijo coalho, cebola caramelizada e molho da casa.', 32.9, ['artesanal', 'carne', 'queijo'], 0.31, 84, { media: ['burger', 1], emoji: '🍔', prepMin: 18 }),

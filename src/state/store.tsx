@@ -1,6 +1,5 @@
 import React, {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -10,9 +9,16 @@ import React, {
 
 import { dishById, merchantById } from '../data/seed';
 import { computeMetrics } from '../engine/metrics';
-import { buildFeed, defaultLab, updateProfile, type BuildFeedResult } from '../engine/ranking';
+import {
+  buildFeed,
+  defaultLab,
+  rerankUpcoming,
+  topTasteProfile,
+  updateProfile,
+  type BuildFeedResult,
+} from '../engine/ranking';
 import { evaluateTriggers } from '../engine/triggers';
-import type { CartLine, LabConfig, LogEvent, SessionMetrics, TriggerDecision } from '../types';
+import type { CartLine, LabConfig, LogEvent, SessionMetrics, TasteEntry, TriggerDecision } from '../types';
 
 const MAX_EVENTS = 400;
 
@@ -23,6 +29,7 @@ export interface AppState {
   profile: Record<string, number>;
   seenMerchant: Record<string, number>;
   savedIds: string[];
+  watchedCompleteIds: string[];
   skippedIds: string[];
   cart: CartLine[];
   events: LogEvent[];
@@ -32,7 +39,9 @@ export interface AppState {
   cardsShown: number;
   skips: number;
   saves: number;
+  watchedComplete: number;
   adds: number;
+  lastSignalNote: string | null;
   merchantImpressions: Record<string, number>;
   interruptionsToday: number;
   lastTriggerAt: number | null;
@@ -43,6 +52,7 @@ export interface AppState {
 
 type Action =
   | { type: 'impression'; at: number; dishId: string; merchantId: string }
+  | { type: 'watchComplete'; at: number; dishId: string }
   | { type: 'skip'; at: number; dishId: string }
   | { type: 'save'; at: number; dishId: string }
   | { type: 'unsave'; at: number; dishId: string }
@@ -73,6 +83,7 @@ export function createInitialState(now: number = Date.now()): AppState {
     profile: {},
     seenMerchant: {},
     savedIds: [],
+    watchedCompleteIds: [],
     skippedIds: [],
     cart: [],
     events: [],
@@ -82,7 +93,9 @@ export function createInitialState(now: number = Date.now()): AppState {
     cardsShown: 0,
     skips: 0,
     saves: 0,
+    watchedComplete: 0,
     adds: 0,
+    lastSignalNote: null,
     merchantImpressions: {},
     interruptionsToday: 0,
     lastTriggerAt: null,
@@ -116,36 +129,70 @@ function reducer(state: AppState, action: Action): AppState {
         }),
       };
     }
+    case 'watchComplete': {
+      const dish = dishById.get(action.dishId);
+      if (!dish || state.watchedCompleteIds.includes(action.dishId)) return state;
+      const profile = updateProfile(state.profile, dish, 'watch_complete');
+      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
+      return {
+        ...state,
+        watchedComplete: state.watchedComplete + 1,
+        watchedCompleteIds: [...state.watchedCompleteIds, action.dishId],
+        profile,
+        feed,
+        lastSignalNote: `🎬 Viu Reel completo → algoritmo subiu ${tagsPreview}`,
+        ...pushEvent(state, {
+          name: 'watch_complete',
+          at: action.at,
+          dishId: action.dishId,
+          meta: { durationSec: dish.durationSec, kind: dish.reelKind },
+        }),
+      };
+    }
     case 'skip': {
       const dish = dishById.get(action.dishId);
       if (!dish) return state;
+      const profile = updateProfile(state.profile, dish, 'skip');
+      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
       return {
         ...state,
         skips: state.skips + 1,
         skippedIds: [...state.skippedIds, action.dishId],
-        profile: updateProfile(state.profile, dish, 'skip'),
+        profile,
+        feed,
+        lastSignalNote: `✕ Pulou rápido → algoritmo reduziu ${tagsPreview}`,
         ...pushEvent(state, { name: 'skip', at: action.at, dishId: action.dishId }),
       };
     }
     case 'save': {
       const dish = dishById.get(action.dishId);
       if (!dish || state.savedIds.includes(action.dishId)) return state;
+      const profile = updateProfile(state.profile, dish, 'save');
+      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
       return {
         ...state,
         saves: state.saves + 1,
         savedIds: [...state.savedIds, action.dishId],
-        profile: updateProfile(state.profile, dish, 'save'),
+        profile,
+        feed,
+        lastSignalNote: `♥ Like → algoritmo subiu ${tagsPreview}`,
         ...pushEvent(state, { name: 'save', at: action.at, dishId: action.dishId }),
       };
     }
     case 'unsave': {
       const dish = dishById.get(action.dishId);
       if (!dish) return state;
+      const profile = updateProfile(state.profile, dish, 'skip');
+      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
       return {
         ...state,
         saves: Math.max(0, state.saves - 1),
         savedIds: state.savedIds.filter((id) => id !== action.dishId),
-        profile: updateProfile(state.profile, dish, 'skip'),
+        profile,
+        feed,
         ...pushEvent(state, { name: 'unsave', at: action.at, dishId: action.dishId }),
       };
     }
@@ -158,12 +205,18 @@ function reducer(state: AppState, action: Action): AppState {
             line.dishId === action.dishId ? { ...line, qty: line.qty + 1 } : line,
           )
         : [...state.cart, { dishId: action.dishId, qty: 1 }];
+      const profile = updateProfile(state.profile, dish, 'add');
+      const feed = rerankUpcoming(state.feed, Math.max(1, state.cardsShown), state.lab, profile);
+      const tagsPreview = dish.tags.slice(0, 2).map((t) => `#${t}`).join(' ');
       return {
         ...state,
         cart,
         adds: state.adds + 1,
         firstAddAt: state.firstAddAt ?? action.at,
         checkoutDone: false,
+        profile,
+        feed,
+        lastSignalNote: `🛒 Clicou em pedir → algoritmo reforçou ++${tagsPreview}`,
         ...pushEvent(state, { name: 'add', at: action.at, dishId: action.dishId }),
       };
     }
@@ -254,6 +307,7 @@ function reducer(state: AppState, action: Action): AppState {
         profile: {},
         seenMerchant: {},
         savedIds: [],
+        watchedCompleteIds: [],
         skippedIds: [],
         cart: [],
         events: [],
@@ -263,7 +317,9 @@ function reducer(state: AppState, action: Action): AppState {
         cardsShown: 0,
         skips: 0,
         saves: 0,
+        watchedComplete: 0,
         adds: 0,
+        lastSignalNote: null,
         merchantImpressions: {},
         interruptionsToday: 0,
         lastTriggerAt: null,
@@ -280,11 +336,13 @@ function reducer(state: AppState, action: Action): AppState {
 interface StoreValue {
   state: AppState;
   metrics: SessionMetrics;
+  tasteProfile: TasteEntry[];
   trigger: TriggerDecision;
   cartItems: Array<{ dishId: string; name: string; emoji: string; qty: number; price: number; merchantName: string }>;
   cartTotal: number;
   actions: {
     impression: (dishId: string, merchantId: string) => void;
+    watchComplete: (dishId: string) => void;
     skip: (dishId: string) => void;
     save: (dishId: string) => void;
     unsave: (dishId: string) => void;
@@ -307,7 +365,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, () => createInitialState());
   const [tick, setTick] = useState(0);
 
-  // Reavalia gatilhos e métricas periodicamente (janela de fome, cooldown, tempo de sessão).
   useEffect(() => {
     const timer = setInterval(() => setTick((value) => value + 1), 5000);
     return () => clearInterval(timer);
@@ -323,6 +380,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         cardsShown: state.cardsShown,
         skips: state.skips,
         saves: state.saves,
+        watchedComplete: state.watchedComplete,
         adds: state.adds,
         merchantImpressions: state.merchantImpressions,
         triggersShown: state.interruptionsToday,
@@ -331,6 +389,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }),
     [state, now],
   );
+
+  const tasteProfile = useMemo(() => topTasteProfile(state.profile, 6), [state.profile]);
 
   const trigger = useMemo(
     () =>
@@ -375,6 +435,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     () => ({
       impression: (dishId: string, merchantId: string) =>
         dispatch({ type: 'impression', at: Date.now(), dishId, merchantId }),
+      watchComplete: (dishId: string) => dispatch({ type: 'watchComplete', at: Date.now(), dishId }),
       skip: (dishId: string) => dispatch({ type: 'skip', at: Date.now(), dishId }),
       save: (dishId: string) => dispatch({ type: 'save', at: Date.now(), dishId }),
       unsave: (dishId: string) => dispatch({ type: 'unsave', at: Date.now(), dishId }),
@@ -394,8 +455,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<StoreValue>(
-    () => ({ state, metrics, trigger, cartItems, cartTotal, actions }),
-    [state, metrics, trigger, cartItems, cartTotal, actions],
+    () => ({ state, metrics, tasteProfile, trigger, cartItems, cartTotal, actions }),
+    [state, metrics, tasteProfile, trigger, cartItems, cartTotal, actions],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

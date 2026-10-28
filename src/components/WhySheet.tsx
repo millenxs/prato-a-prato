@@ -3,7 +3,7 @@ import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { colors, font, radius, spacing } from '../theme';
-import type { FeedItem, LabConfig } from '../types';
+import type { FeedItem, LabConfig, SessionMetrics, TasteEntry } from '../types';
 import type { BuildFeedResult } from '../engine/ranking';
 import { Badge, Bar, Button, SectionLabel, formatBRL } from './ui';
 
@@ -12,6 +12,8 @@ export function WhySheet({
   item,
   feed,
   lab,
+  tasteProfile = [],
+  metrics,
   onClose,
   onAdd,
 }: {
@@ -19,6 +21,8 @@ export function WhySheet({
   item: FeedItem | null;
   feed: BuildFeedResult;
   lab: LabConfig;
+  tasteProfile?: TasteEntry[];
+  metrics?: SessionMetrics;
   onClose: () => void;
   onAdd: (dishId: string) => void;
 }) {
@@ -37,15 +41,61 @@ export function WhySheet({
             <View style={styles.headerText}>
               <Text style={styles.dishName}>{item.dish.name}</Text>
               <Text style={styles.merchant}>
-                {item.merchant.emoji} {item.merchant.name} · {item.merchant.cuisine}
+                {item.merchant.emoji} {item.merchant.name} · Reel de {item.dish.durationSec}s ({item.dish.reelKind})
               </Text>
               <Text style={styles.scoreLine}>
-                score <Text style={styles.scoreValue}>{(item.score * 100).toFixed(0)}</Text> / 100
+                match com você <Text style={styles.scoreValue}>{(item.score * 100).toFixed(0)}%</Text>
               </Text>
             </View>
           </View>
 
-          <SectionLabel>Como o score foi montado</SectionLabel>
+          <SectionLabel>🧠 Seu perfil no algoritmo (aprendizado ao vivo)</SectionLabel>
+          <View style={styles.signalGrid}>
+            <View style={styles.signalChip}>
+              <Text style={styles.signalValue}>♥ {metrics?.saves ?? 0}</Text>
+              <Text style={styles.signalLabel}>Likes (+22%)</Text>
+            </View>
+            <View style={styles.signalChip}>
+              <Text style={styles.signalValue}>🎬 {metrics?.watchedComplete ?? 0}</Text>
+              <Text style={styles.signalLabel}>Vistos 100% (+16%)</Text>
+            </View>
+            <View style={styles.signalChip}>
+              <Text style={styles.signalValue}>🛒 {metrics?.adds ?? 0}</Text>
+              <Text style={styles.signalLabel}>Carrinho (+32%)</Text>
+            </View>
+            <View style={styles.signalChip}>
+              <Text style={styles.signalValue}>✕ {metrics?.skips ?? 0}</Text>
+              <Text style={styles.signalLabel}>Pulos (-14%)</Text>
+            </View>
+          </View>
+
+          {tasteProfile.length === 0 ? (
+            <Text style={styles.muted}>
+              Interaja nos Reels (dê like no ♥, assista até o fim ou clique no 🛒) para ver seu DNA de gosto se formar
+              aqui e reordenar os próximos vídeos.
+            </Text>
+          ) : (
+            <View style={styles.factorList}>
+              {tasteProfile.map((entry) => {
+                const normalized = Math.max(0.05, Math.min(1, 0.5 + entry.score * 0.5));
+                const positive = entry.score >= 0;
+                return (
+                  <View key={entry.tag} style={styles.factorRow}>
+                    <View style={styles.factorHeader}>
+                      <Text style={styles.factorLabel}>#{entry.tag}</Text>
+                      <Text style={[styles.factorValue, { color: positive ? colors.success : colors.danger }]}>
+                        {positive ? '+' : ''}
+                        {Math.round(entry.score * 100)} pts de afinidade
+                      </Text>
+                    </View>
+                    <Bar value={normalized} color={positive ? colors.success : colors.danger} height={6} />
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          <SectionLabel>Como este Reel foi pontuado</SectionLabel>
           <View style={styles.factorList}>
             {item.factors.map((factor) => (
               <View key={factor.key} style={styles.factorRow}>
@@ -61,9 +111,10 @@ export function WhySheet({
             ))}
           </View>
 
-          <SectionLabel>Restrições duras que este card passou</SectionLabel>
+          <SectionLabel>Restrições duras que este Reel passou</SectionLabel>
           <View style={styles.constraintRow}>
-            <Badge label={`loja aberta`} tone="success" />
+            <Badge label="loja aberta" tone="success" />
+            <Badge label={`duração ${item.dish.durationSec}s ≤ 60s`} tone="success" />
             <Badge label={`ETA ${item.merchant.etaMin} ≤ ${lab.maxEtaMin} min`} tone="success" />
             <Badge label={`${item.merchant.distanceKm.toFixed(1)} ≤ ${lab.maxDistanceKm} km`} tone="success" />
             <Badge label={`cozinha ${item.merchant.openOrders}/${item.merchant.capacityPerHour}`} tone="success" />
@@ -91,7 +142,7 @@ export function WhySheet({
 
           {feed.blockedByReason.length > 0 ? (
             <Text style={styles.summary}>
-              {feed.eligible} de {feed.candidates} pratos elegíveis ·{' '}
+              {feed.eligible} de {feed.candidates} Reels elegíveis ·{' '}
               {feed.blockedByReason.map((b) => `${b.count} ${b.reason}`).join(' · ')}
               {feed.cappedOut > 0
                 ? ` · ${feed.cappedOut} card(s) ficaram fora por causa do teto de ${lab.maxPerMerchant} por loja`
@@ -100,8 +151,8 @@ export function WhySheet({
           ) : null}
 
           <View style={styles.actions}>
-            <Button title={`Adicionar ${formatBRL(item.dish.price)}`} onPress={() => onAdd(item.dish.id)} />
-            <Button title="Continuar rolando" variant="ghost" onPress={onClose} />
+            <Button title={`🛒 Fazer pedido · ${formatBRL(item.dish.price)}`} onPress={() => onAdd(item.dish.id)} />
+            <Button title="Continuar assistindo Reels" variant="ghost" onPress={onClose} />
           </View>
         </ScrollView>
       </View>
@@ -112,7 +163,7 @@ export function WhySheet({
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: colors.overlay },
   sheet: {
-    maxHeight: '82%',
+    maxHeight: '85%',
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
@@ -136,11 +187,23 @@ const styles = StyleSheet.create({
   merchant: { color: colors.textMuted, fontSize: font.small },
   scoreLine: { color: colors.textFaint, fontSize: font.small, marginTop: 2 },
   scoreValue: { color: colors.accent, fontWeight: '800' },
+  signalGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  signalChip: {
+    width: '47%',
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 2,
+  },
+  signalValue: { color: colors.white, fontSize: font.body, fontWeight: '800' },
+  signalLabel: { color: colors.textFaint, fontSize: 10 },
   factorList: { gap: spacing.md },
   factorRow: { gap: 6 },
   factorHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   factorLabel: { color: colors.text, fontSize: font.small, fontWeight: '700' },
-  factorValue: { color: colors.textFaint, fontSize: font.micro },
+  factorValue: { color: colors.textFaint, fontSize: font.micro, fontWeight: '700' },
   factorHint: { color: colors.textFaint, fontSize: font.micro },
   constraintRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   exclusionList: { gap: spacing.sm },
@@ -155,6 +218,6 @@ const styles = StyleSheet.create({
   exclusionMerchant: { color: colors.textFaint, fontSize: font.micro },
   exclusionReason: { color: colors.danger, fontSize: font.small, marginTop: 2 },
   summary: { color: colors.textMuted, fontSize: font.small, lineHeight: 20 },
-  muted: { color: colors.textMuted, fontSize: font.small },
+  muted: { color: colors.textMuted, fontSize: font.small, lineHeight: 20 },
   actions: { gap: spacing.sm },
 });
