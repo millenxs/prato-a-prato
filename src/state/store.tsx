@@ -9,6 +9,7 @@ import React, {
 
 import { dishById, merchantById } from '../data/seed';
 import { computeMetrics } from '../engine/metrics';
+import { groupCartByMerchant, nextOrderStage, splitCartIntoOrders, type SplitOrdersMeta } from '../engine/orders';
 import {
   buildFeed,
   defaultLab,
@@ -18,7 +19,16 @@ import {
   type BuildFeedResult,
 } from '../engine/ranking';
 import { evaluateTriggers } from '../engine/triggers';
-import type { CartLine, LabConfig, LogEvent, SessionMetrics, TasteEntry, TriggerDecision } from '../types';
+import type {
+  ActiveMerchantOrder,
+  CartLine,
+  CartMerchantGroup,
+  LabConfig,
+  LogEvent,
+  SessionMetrics,
+  TasteEntry,
+  TriggerDecision,
+} from '../types';
 
 const MAX_EVENTS = 400;
 
@@ -49,6 +59,7 @@ export interface AppState {
   activeTriggerId: string | null;
   dismissedTriggerIds: string[];
   checkoutDone: boolean;
+  activeOrders: ActiveMerchantOrder[];
 }
 
 type Action =
@@ -60,7 +71,9 @@ type Action =
   | { type: 'unsave'; at: number; dishId: string }
   | { type: 'add'; at: number; dishId: string }
   | { type: 'remove'; at: number; dishId: string }
-  | { type: 'checkout'; at: number }
+  | { type: 'checkout'; at: number; meta?: SplitOrdersMeta }
+  | { type: 'advanceOrderStage'; orderId: string }
+  | { type: 'clearActiveOrders' }
   | { type: 'closeCheckout' }
   | { type: 'setLab'; lab: LabConfig }
   | { type: 'rebuild'; at: number; seed: number }
@@ -105,6 +118,7 @@ export function createInitialState(now: number = Date.now()): AppState {
     activeTriggerId: null,
     dismissedTriggerIds: [],
     checkoutDone: false,
+    activeOrders: [],
   };
 }
 
@@ -240,13 +254,33 @@ function reducer(state: AppState, action: Action): AppState {
         ...pushEvent(state, { name: 'remove', at: action.at, dishId: action.dishId }),
       };
     }
-    case 'checkout':
+    case 'checkout': {
+      const splitOrders = splitCartIntoOrders(state.cart, {
+        ...action.meta,
+        now: action.at,
+        seqStart: 4820 + state.activeOrders.length,
+      });
       return {
         ...state,
         checkoutDone: true,
         cart: [],
-        ...pushEvent(state, { name: 'checkout', at: action.at, meta: { lines: state.cart.length } }),
+        activeOrders: [...splitOrders, ...state.activeOrders],
+        ...pushEvent(state, {
+          name: 'checkout',
+          at: action.at,
+          meta: { lines: state.cart.length, merchants: splitOrders.length },
+        }),
       };
+    }
+    case 'advanceOrderStage':
+      return {
+        ...state,
+        activeOrders: state.activeOrders.map((order) =>
+          order.id === action.orderId ? { ...order, stage: nextOrderStage(order.stage) } : order,
+        ),
+      };
+    case 'clearActiveOrders':
+      return { ...state, activeOrders: [], checkoutDone: false };
     case 'closeCheckout':
       return { ...state, checkoutDone: false };
     case 'setLab': {
@@ -333,6 +367,7 @@ function reducer(state: AppState, action: Action): AppState {
         activeTriggerId: null,
         dismissedTriggerIds: [],
         checkoutDone: false,
+        activeOrders: [],
       };
     }
     default:
@@ -346,6 +381,7 @@ interface StoreValue {
   tasteProfile: TasteEntry[];
   trigger: TriggerDecision;
   cartItems: Array<{ dishId: string; name: string; emoji: string; qty: number; price: number; merchantName: string }>;
+  cartGroups: CartMerchantGroup[];
   cartTotal: number;
   actions: {
     focus: (dishId: string) => void;
@@ -356,7 +392,9 @@ interface StoreValue {
     unsave: (dishId: string) => void;
     add: (dishId: string) => void;
     remove: (dishId: string) => void;
-    checkout: () => void;
+    checkout: (meta?: SplitOrdersMeta) => void;
+    advanceOrderStage: (orderId: string) => void;
+    clearActiveOrders: () => void;
     closeCheckout: () => void;
     setLab: (lab: LabConfig) => void;
     rebuild: () => void;
@@ -417,24 +455,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [state, now],
   );
 
-  const { cartItems, cartTotal } = useMemo(() => {
-    const items = state.cart.flatMap((line) => {
-      const dish = dishById.get(line.dishId);
-      if (!dish) return [];
-      const merchant = merchantById.get(dish.merchantId);
-      return [
-        {
-          dishId: dish.id,
-          name: dish.name,
-          emoji: dish.emoji,
-          qty: line.qty,
-          price: dish.price,
-          merchantName: merchant?.name ?? 'Loja',
-        },
-      ];
-    });
+  const { cartItems, cartGroups, cartTotal } = useMemo(() => {
+    const groups = groupCartByMerchant(state.cart);
+    const items = groups.flatMap((g) => g.items);
     return {
       cartItems: items,
+      cartGroups: groups,
       cartTotal: items.reduce((acc, item) => acc + item.price * item.qty, 0),
     };
   }, [state.cart]);
@@ -450,7 +476,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       unsave: (dishId: string) => dispatch({ type: 'unsave', at: Date.now(), dishId }),
       add: (dishId: string) => dispatch({ type: 'add', at: Date.now(), dishId }),
       remove: (dishId: string) => dispatch({ type: 'remove', at: Date.now(), dishId }),
-      checkout: () => dispatch({ type: 'checkout', at: Date.now() }),
+      checkout: (meta?: SplitOrdersMeta) => dispatch({ type: 'checkout', at: Date.now(), meta }),
+      advanceOrderStage: (orderId: string) => dispatch({ type: 'advanceOrderStage', orderId }),
+      clearActiveOrders: () => dispatch({ type: 'clearActiveOrders' }),
       closeCheckout: () => dispatch({ type: 'closeCheckout' }),
       setLab: (lab: LabConfig) => dispatch({ type: 'setLab', lab }),
       rebuild: () => dispatch({ type: 'rebuild', at: Date.now(), seed: Date.now() % 100000 }),
@@ -464,8 +492,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<StoreValue>(
-    () => ({ state, metrics, tasteProfile, trigger, cartItems, cartTotal, actions }),
-    [state, metrics, tasteProfile, trigger, cartItems, cartTotal, actions],
+    () => ({ state, metrics, tasteProfile, trigger, cartItems, cartGroups, cartTotal, actions }),
+    [state, metrics, tasteProfile, trigger, cartItems, cartGroups, cartTotal, actions],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

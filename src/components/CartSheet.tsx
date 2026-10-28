@@ -4,12 +4,13 @@ import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { dishArtwork } from '../data/artwork';
-import { dishById, merchantById } from '../data/seed';
+import { dishById } from '../data/seed';
 import { useStore } from '../state/store';
 import { colors, face } from '../theme';
+import type { ActiveMerchantOrder, OrderStage } from '../types';
 import { Button, formatBRL } from './ui';
 
-type Step = 'bag' | 'checkout';
+type Step = 'bag' | 'checkout' | 'tracking';
 type CouponKey = 'NONE' | 'FOME10' | 'FRETEGRATIS';
 type PaymentMethod = 'pix' | 'card' | 'apple_pay' | 'delivery';
 type DeliveryMode = 'standard' | 'express';
@@ -28,8 +29,15 @@ const PAYMENTS: Array<{ id: PaymentMethod; title: string; subtitle: string; badg
 
 const NOTES = ['Enviar sachês e guardanapo', 'Sem cebola', 'Tocar interfone ao chegar', 'CPF na nota'] as const;
 
+const STAGE_META: Record<OrderStage, { label: string; color: string; stepIndex: number }> = {
+  confirmado: { label: 'Recebido pelo restaurante', color: colors.gold, stepIndex: 1 },
+  preparando: { label: 'Em preparo na cozinha', color: colors.gold, stepIndex: 2 },
+  a_caminho: { label: 'Saiu para entrega', color: colors.accent, stepIndex: 3 },
+  entregue: { label: 'Pedido entregue', color: colors.success, stepIndex: 4 },
+};
+
 export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { cartItems, cartTotal, state, actions } = useStore();
+  const { cartItems, cartGroups, cartTotal, state, actions } = useStore();
   const inset = useSafeAreaInsets();
 
   const [step, setStep] = useState<Step>('bag');
@@ -40,14 +48,16 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
   const [selectedNotes, setSelectedNotes] = useState<string[]>(['Enviar sachês e guardanapo']);
 
   useEffect(() => {
-    if (!visible) {
+    if (!visible) return;
+    if (state.checkoutDone || (cartItems.length === 0 && state.activeOrders.length > 0)) {
+      setStep('tracking');
+    } else {
       setStep('bag');
     }
-  }, [visible]);
+  }, [visible, state.checkoutDone, cartItems.length, state.activeOrders.length]);
 
-  const merchantIds = new Set(cartItems.map((line) => dishById.get(line.dishId)?.merchantId));
-  const baseDeliveryFee = [...merchantIds].reduce((sum, id) => sum + (id ? merchantById.get(id)?.deliveryFee ?? 0 : 0), 0);
-  const expressExtra = deliveryMode === 'express' && cartItems.length > 0 ? 4.9 : 0;
+  const baseDeliveryFee = cartGroups.reduce((sum, g) => sum + g.deliveryFee, 0);
+  const expressExtra = deliveryMode === 'express' && cartItems.length > 0 ? 4.9 * cartGroups.length : 0;
   const rawDeliveryFee = baseDeliveryFee + expressExtra;
   const couponDiscount =
     cartItems.length === 0
@@ -65,6 +75,16 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
     setSelectedNotes((prev) => (prev.includes(note) ? prev.filter((item) => item !== note) : [...prev, note]));
   };
 
+  const handleConfirmCheckout = () => {
+    actions.checkout({
+      addressLabel: chosenAddress.label,
+      addressDetail: chosenAddress.detail,
+      paymentTitle: chosenPayment.title,
+      express: deliveryMode === 'express',
+    });
+    setStep('tracking');
+  };
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -79,7 +99,7 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
 
           <View style={styles.header}>
             <View style={styles.headerLeft}>
-              {step === 'checkout' && !state.checkoutDone ? (
+              {step === 'checkout' ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a sacola"
@@ -89,17 +109,17 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
                   <ArrowLeft size={18} color={colors.text} />
                 </Pressable>
               ) : null}
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.eyebrow}>
-                  {state.checkoutDone
-                    ? 'PEDIDO CONFIRMADO'
+                  {step === 'tracking'
+                    ? `ACOMPANHAMENTO · ${state.activeOrders.length} RESTAURANTE(S)`
                     : step === 'checkout'
-                      ? 'PASSO 2 DE 2 · CHECKOUT'
-                      : 'PASSO 1 DE 2 · SUA SACOLA'}
+                      ? `CHECKOUT · ${cartGroups.length} RESTAURANTE(S)`
+                      : `SUA SACOLA · ${cartGroups.length || 0} RESTAURANTE(S)`}
                 </Text>
-                <Text style={styles.title}>
-                  {state.checkoutDone
-                    ? 'Pedido a caminho!'
+                <Text style={styles.title} numberOfLines={1}>
+                  {step === 'tracking'
+                    ? 'Pedidos em andamento'
                     : step === 'checkout'
                       ? 'Entrega e pagamento'
                       : 'Sua sacola'}
@@ -111,98 +131,137 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
             </Pressable>
           </View>
 
-          {state.checkoutDone ? (
+          {cartItems.length > 0 && state.activeOrders.length > 0 ? (
+            <View style={styles.modeSwitchRow}>
+              <Pressable
+                onPress={() => setStep('bag')}
+                style={[styles.modeTab, step !== 'tracking' && styles.modeTabActive]}
+              >
+                <Text style={[styles.modeTabText, step !== 'tracking' && styles.modeTabTextActive]}>
+                  Nova sacola ({cartItems.reduce((a, b) => a + b.qty, 0)})
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setStep('tracking')}
+                style={[styles.modeTab, step === 'tracking' && styles.modeTabActive]}
+              >
+                <Text style={[styles.modeTabText, step === 'tracking' && styles.modeTabTextActive]}>
+                  Em andamento ({state.activeOrders.length})
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {step === 'tracking' && state.activeOrders.length > 0 ? (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.successWrap}>
-              <View style={styles.successBanner}>
+              <View style={styles.multiRouteBanner}>
                 <View style={styles.successIcon}>
-                  <Check size={28} color={colors.onAccent} />
+                  <Check size={24} color={colors.onAccent} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.orderCode}>Pedido #PP-4829 confirmado</Text>
-                  <Text style={styles.emptyTitle}>A cozinha já recebeu seu pedido</Text>
+                  <Text style={styles.orderCode}>
+                    {state.activeOrders.length > 1
+                      ? `${state.activeOrders.length} pedidos encaminhados em paralelo`
+                      : 'Pedido encaminhado ao restaurante'}
+                  </Text>
+                  <Text style={styles.body}>
+                    {state.activeOrders.length > 1
+                      ? 'Cada restaurante recebeu apenas os seus próprios itens e prepara de forma independente:'
+                      : 'A cozinha já recebeu seus itens e iniciou o preparo:'}
+                  </Text>
                 </View>
               </View>
 
-              <View style={styles.timelineCard}>
-                <View style={styles.timelineStep}>
-                  <View style={[styles.timelineDot, styles.timelineDotDone]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.timelineTitle}>1. Pagamento e pedido aprovados</Text>
-                    <Text style={styles.timelineSub}>{chosenPayment.title}</Text>
-                  </View>
-                  <Text style={styles.timelineBadge}>Agora</Text>
-                </View>
-
-                <View style={styles.timelineStep}>
-                  <View style={[styles.timelineDot, styles.timelineDotActive]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.timelineTitle}>2. Preparando na cozinha</Text>
-                    <Text style={styles.timelineSub}>Ingredientes na chapa · embalagem térmica</Text>
-                  </View>
-                  <Text style={[styles.timelineBadge, { color: colors.gold }]}>Em preparo</Text>
-                </View>
-
-                <View style={styles.timelineStep}>
-                  <View style={styles.timelineDot} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.timelineTitle}>3. Entrega no seu endereço</Text>
-                    <Text style={styles.timelineSub}>{chosenAddress.detail}</Text>
-                  </View>
-                  <Text style={styles.timelineBadge}>{deliveryMode === 'express' ? '15–22 min' : '25–35 min'}</Text>
-                </View>
-              </View>
+              {state.activeOrders.map((order) => (
+                <MerchantOrderCard
+                  key={order.id}
+                  order={order}
+                  onAdvance={() => actions.advanceOrderStage(order.id)}
+                />
+              ))}
 
               <Text style={styles.disclaimer}>
-                Protótipo de portfólio: fluxo completo de checkout simulado (nenhuma cobrança real foi realizada).
+                Protótipo de portfólio: roteamento multi-restaurante e acompanhamento simulados.
               </Text>
-              <Button title="Voltar ao feed de pratos" onPress={onClose} />
+              <Button title="Voltar ao feed e descobrir mais" onPress={onClose} />
             </ScrollView>
           ) : cartItems.length === 0 ? (
             <View style={styles.empty}>
               <ShoppingBag size={36} color={colors.accent} />
               <Text style={styles.emptyTitle}>Sua sacola está vazia</Text>
               <Text style={styles.body}>
-                Escolha um prato no feed e toque em “Quero esse” para montar seu pedido e ir para o checkout.
+                Você pode adicionar pratos de um ou de vários restaurantes diferentes no feed — nós separamos e
+                encaminhamos o pedido para cada cozinha automaticamente.
               </Text>
               <Button title="Explorar pratos agora" onPress={onClose} />
             </View>
           ) : step === 'bag' ? (
             <>
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.list}>
-                {cartItems.map((line) => {
-                  const dish = dishById.get(line.dishId)!;
-                  return (
-                    <View key={line.dishId} style={styles.item}>
-                      <Image source={dishArtwork(dish)} contentFit="cover" style={styles.image} />
-                      <View style={styles.itemInfo}>
-                        <Text style={styles.merchant}>{line.merchantName}</Text>
-                        <Text style={styles.itemName}>{line.name}</Text>
-                        <View style={styles.itemBottom}>
-                          <Text style={styles.itemPrice}>{formatBRL(line.price * line.qty)}</Text>
-                          <View style={styles.quantity}>
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel={`Diminuir ${line.name}`}
-                              style={styles.quantityButton}
-                              onPress={() => actions.remove(line.dishId)}
-                            >
-                              <Minus size={15} color={colors.text} />
-                            </Pressable>
-                            <Text style={styles.qty}>{line.qty}</Text>
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel={`Aumentar ${line.name}`}
-                              style={styles.quantityButton}
-                              onPress={() => actions.add(line.dishId)}
-                            >
-                              <Plus size={15} color={colors.text} />
-                            </Pressable>
+                {cartGroups.length > 1 ? (
+                  <View style={styles.multiNotice}>
+                    <Sparkles size={16} color={colors.gold} />
+                    <Text style={styles.multiNoticeText}>
+                      Sacola Multi-Restaurante: você paga tudo de uma vez e encaminhamos{' '}
+                      <Text style={{ color: colors.white, fontFamily: face.bold }}>
+                        {cartGroups.length} pedidos separados
+                      </Text>{' '}
+                      para cada restaurante.
+                    </Text>
+                  </View>
+                ) : null}
+
+                {cartGroups.map((group, groupIndex) => (
+                  <View key={group.merchantId} style={styles.merchantGroupCard}>
+                    <View style={styles.merchantGroupHeader}>
+                      <View style={styles.merchantBadge}>
+                        <Text style={styles.merchantBadgeText}>
+                          {cartGroups.length > 1 ? `RESTAURANTE ${groupIndex + 1}` : 'RESTAURANTE'}
+                        </Text>
+                      </View>
+                      <Text style={styles.merchantGroupTitle} numberOfLines={1}>
+                        {group.merchantName}
+                      </Text>
+                      <Text style={styles.merchantGroupMeta}>
+                        {group.etaMin} min · frete {formatBRL(group.deliveryFee)}
+                      </Text>
+                    </View>
+
+                    {group.items.map((line) => {
+                      const dish = dishById.get(line.dishId)!;
+                      return (
+                        <View key={line.dishId} style={styles.itemRow}>
+                          <Image source={dishArtwork(dish)} contentFit="cover" style={styles.image} />
+                          <View style={styles.itemInfo}>
+                            <Text style={styles.itemName}>{line.name}</Text>
+                            <View style={styles.itemBottom}>
+                              <Text style={styles.itemPrice}>{formatBRL(line.price * line.qty)}</Text>
+                              <View style={styles.quantity}>
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Diminuir ${line.name}`}
+                                  style={styles.quantityButton}
+                                  onPress={() => actions.remove(line.dishId)}
+                                >
+                                  <Minus size={14} color={colors.text} />
+                                </Pressable>
+                                <Text style={styles.qty}>{line.qty}</Text>
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Aumentar ${line.name}`}
+                                  style={styles.quantityButton}
+                                  onPress={() => actions.add(line.dishId)}
+                                >
+                                  <Plus size={14} color={colors.text} />
+                                </Pressable>
+                              </View>
+                            </View>
                           </View>
                         </View>
-                      </View>
-                    </View>
-                  );
-                })}
+                      );
+                    })}
+                  </View>
+                ))}
 
                 <View style={styles.sectionBlock}>
                   <View style={styles.sectionRow}>
@@ -233,12 +292,15 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
 
               <View style={styles.totals}>
                 <View style={styles.totalRow}>
-                  <Text style={styles.body}>Subtotal ({cartItems.reduce((a, b) => a + b.qty, 0)} itens)</Text>
+                  <Text style={styles.body}>
+                    Subtotal ({cartItems.reduce((a, b) => a + b.qty, 0)} itens em {cartGroups.length}{' '}
+                    {cartGroups.length > 1 ? 'restaurantes' : 'restaurante'})
+                  </Text>
                   <Text style={styles.body}>{formatBRL(cartTotal)}</Text>
                 </View>
                 <View style={styles.totalRow}>
                   <Text style={styles.body}>
-                    Entrega{merchantIds.size > 1 ? ` (${merchantIds.size} lojas)` : ''}
+                    Entregas ({cartGroups.length} {cartGroups.length > 1 ? 'rotas' : 'rota'})
                   </Text>
                   <Text style={styles.body}>{formatBRL(rawDeliveryFee)}</Text>
                 </View>
@@ -266,6 +328,27 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
           ) : (
             <>
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.list}>
+                <View style={styles.sectionBlock}>
+                  <Text style={styles.sectionTitle}>
+                    Encaminhamento automático ({cartGroups.length}{' '}
+                    {cartGroups.length > 1 ? 'restaurantes' : 'restaurante'})
+                  </Text>
+                  <View style={styles.routeSummaryBox}>
+                    {cartGroups.map((g, i) => (
+                      <View key={g.merchantId} style={styles.routeSummaryRow}>
+                        <Text style={styles.routeSummaryIndex}>#{i + 1}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.optionTitle}>{g.merchantName}</Text>
+                          <Text style={styles.optionSub}>
+                            {g.items.map((it) => `${it.qty}x ${it.name}`).join(', ')}
+                          </Text>
+                        </View>
+                        <Text style={styles.routeEta}>{g.etaMin} min</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+
                 <View style={styles.sectionBlock}>
                   <View style={styles.sectionRow}>
                     <MapPin size={15} color={colors.accent} />
@@ -299,21 +382,23 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
                       onPress={() => setDeliveryMode('standard')}
                       style={[styles.speedCard, deliveryMode === 'standard' && styles.optionCardActive]}
                     >
-                      <Text style={styles.optionTitle}>Padrão · 25–35 min</Text>
+                      <Text style={styles.optionTitle}>Padrão</Text>
                       <Text style={styles.optionSub}>{formatBRL(baseDeliveryFee)}</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => setDeliveryMode('express')}
                       style={[styles.speedCard, deliveryMode === 'express' && styles.optionCardActive]}
                     >
-                      <Text style={styles.optionTitle}>Prioritária · 15–22 min</Text>
-                      <Text style={[styles.optionSub, { color: colors.gold }]}>+ R$ 4,90</Text>
+                      <Text style={styles.optionTitle}>Prioritária ⚡</Text>
+                      <Text style={[styles.optionSub, { color: colors.gold }]}>
+                        + {formatBRL(4.9 * cartGroups.length)}
+                      </Text>
                     </Pressable>
                   </View>
                 </View>
 
                 <View style={styles.sectionBlock}>
-                  <Text style={styles.sectionTitle}>Forma de pagamento</Text>
+                  <Text style={styles.sectionTitle}>Forma de pagamento única</Text>
                   {PAYMENTS.map((pm) => {
                     const active = pm.id === payment;
                     return (
@@ -334,7 +419,7 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
                 </View>
 
                 <View style={styles.sectionBlock}>
-                  <Text style={styles.sectionTitle}>Preferências para o restaurante</Text>
+                  <Text style={styles.sectionTitle}>Observações para os restaurantes</Text>
                   <View style={styles.couponRow}>
                     {NOTES.map((note) => {
                       const active = selectedNotes.includes(note);
@@ -355,7 +440,9 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
               <View style={styles.totals}>
                 <View style={styles.totalRow}>
                   <Text style={styles.body}>Pagamento via {chosenPayment.title.split(' · ')[0]}</Text>
-                  <Text style={styles.body}>{chosenAddress.label}</Text>
+                  <Text style={styles.body}>
+                    {cartGroups.length} {cartGroups.length > 1 ? 'restaurantes' : 'restaurante'} · {chosenAddress.label}
+                  </Text>
                 </View>
                 <View style={[styles.totalRow, { marginVertical: 10 }]}>
                   <Text style={styles.total}>Total a pagar</Text>
@@ -364,10 +451,12 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Finalizar pedido simulado"
-                  onPress={actions.checkout}
+                  onPress={handleConfirmCheckout}
                   style={styles.checkout}
                 >
-                  <Text style={styles.checkoutText}>Confirmar e fazer pedido · {formatBRL(finalTotal)}</Text>
+                  <Text style={styles.checkoutText}>
+                    Confirmar e enviar pedido{cartGroups.length > 1 ? 's' : ''} · {formatBRL(finalTotal)}
+                  </Text>
                   <Check size={19} color={colors.onAccent} />
                 </Pressable>
                 <Text style={styles.disclaimer}>Demonstração de portfólio · sem cobrança real</Text>
@@ -380,10 +469,83 @@ export function CartSheet({ visible, onClose }: { visible: boolean; onClose: () 
   );
 }
 
+function MerchantOrderCard({ order, onAdvance }: { order: ActiveMerchantOrder; onAdvance: () => void }) {
+  const stageMeta = STAGE_META[order.stage];
+  const steps = [
+    { key: 1, label: 'Confirmado' },
+    { key: 2, label: 'Na cozinha' },
+    { key: 3, label: 'A caminho' },
+    { key: 4, label: 'Entregue' },
+  ];
+
+  return (
+    <View style={styles.orderTrackCard} testID={`order-card-${order.merchantId}`}>
+      <View style={styles.orderTrackHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.orderTrackId}>
+            {order.id} · {order.merchantName}
+          </Text>
+          <Text style={[styles.orderTrackStatus, { color: stageMeta.color }]}>{stageMeta.label}</Text>
+        </View>
+        <View style={styles.etaBadge}>
+          <Clock3 size={12} color={colors.gold} />
+          <Text style={styles.etaBadgeText}>
+            {order.stage === 'entregue' ? 'Concluído' : `~${order.etaMin} min`}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.stepBarRow}>
+        {steps.map((s) => {
+          const done = stageMeta.stepIndex >= s.key;
+          return (
+            <View key={s.key} style={styles.stepBarCol}>
+              <View style={[styles.stepBarTrack, done && { backgroundColor: stageMeta.color }]} />
+              <Text style={[styles.stepBarLabel, done && { color: colors.text, fontFamily: face.bold }]}>
+                {s.label}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.orderItemsBox}>
+        {order.items.map((item) => (
+          <View key={item.dishId} style={styles.orderItemLine}>
+            <Text style={styles.orderItemText}>
+              {item.qty}x {item.name}
+            </Text>
+            <Text style={styles.orderItemPrice}>{formatBRL(item.price * item.qty)}</Text>
+          </View>
+        ))}
+        <View style={styles.orderItemFooter}>
+          <Text style={styles.orderMetaText}>
+            {order.addressLabel} · {order.paymentTitle.split(' · ')[0]}
+          </Text>
+          <Text style={styles.orderSubtotalText}>
+            Total loja: {formatBRL(order.subtotal + order.deliveryFee)}
+          </Text>
+        </View>
+      </View>
+
+      {order.stage !== 'entregue' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Avançar etapa de ${order.merchantName}`}
+          onPress={onAdvance}
+          style={styles.advanceBtn}
+        >
+          <Text style={styles.advanceBtnText}>Simular avanço desta cozinha →</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', backgroundColor: 'rgba(8, 3, 3, 0.78)' },
   sheet: {
-    maxHeight: '90%',
+    maxHeight: '92%',
     maxWidth: 560,
     width: '100%',
     backgroundColor: colors.surface,
@@ -393,7 +555,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   handle: { width: 38, height: 4, backgroundColor: colors.border, borderRadius: 2, alignSelf: 'center', marginTop: 12 },
-  header: { paddingHorizontal: 24, paddingVertical: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  header: {
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   backBtn: {
     width: 38,
@@ -413,64 +582,186 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceRaised,
     borderRadius: 21,
   },
+  modeSwitchRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingBottom: 12,
+  },
+  modeTab: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  modeTabActive: {
+    backgroundColor: colors.accentSoft,
+    borderColor: colors.accent,
+  },
+  modeTabText: { color: colors.textMuted, fontFamily: face.semibold, fontSize: 12 },
+  modeTabTextActive: { color: colors.white, fontFamily: face.bold },
   empty: { padding: 28, gap: 18, alignItems: 'flex-start' },
-  emptyTitle: { color: colors.text, fontFamily: face.bold, fontSize: 21 },
-  body: { color: colors.textMuted, fontFamily: face.regular, fontSize: 12, lineHeight: 20 },
-  successWrap: { paddingHorizontal: 24, paddingBottom: 24, gap: 18 },
-  successBanner: {
+  emptyTitle: { color: colors.text, fontFamily: face.bold, fontSize: 20 },
+  body: { color: colors.textMuted, fontFamily: face.regular, fontSize: 12, lineHeight: 19 },
+  successWrap: { paddingHorizontal: 24, paddingBottom: 24, gap: 14 },
+  multiRouteBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
     backgroundColor: colors.surfaceRaised,
     borderRadius: 18,
-    padding: 16,
+    padding: 15,
     borderWidth: 1,
     borderColor: colors.accent,
   },
   successIcon: {
-    height: 50,
-    width: 50,
-    borderRadius: 25,
+    height: 44,
+    width: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,
   },
-  orderCode: { color: colors.gold, fontFamily: face.bold, fontSize: 11, marginBottom: 2 },
-  timelineCard: {
+  orderCode: { color: colors.gold, fontFamily: face.bold, fontSize: 12, marginBottom: 2 },
+  orderTrackCard: {
     backgroundColor: colors.surfaceRaised,
     borderRadius: 18,
-    padding: 18,
-    gap: 16,
+    padding: 16,
+    gap: 12,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  timelineStep: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  timelineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.border },
-  timelineDotDone: { backgroundColor: colors.success },
-  timelineDotActive: { backgroundColor: colors.gold },
-  timelineTitle: { color: colors.text, fontFamily: face.bold, fontSize: 13 },
-  timelineSub: { color: colors.textFaint, fontFamily: face.regular, fontSize: 11, marginTop: 2 },
-  timelineBadge: { color: colors.success, fontFamily: face.bold, fontSize: 10 },
-  list: { paddingHorizontal: 24, gap: 18, paddingBottom: 20 },
-  item: {
+  orderTrackHeader: {
     flexDirection: 'row',
-    gap: 14,
-    backgroundColor: colors.surfaceRaised,
-    padding: 12,
-    borderRadius: 18,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  orderTrackId: { color: colors.text, fontFamily: face.display, fontSize: 15 },
+  orderTrackStatus: { fontFamily: face.bold, fontSize: 12, marginTop: 2 },
+  etaBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  image: { width: 72, borderRadius: 13, minHeight: 84 },
+  etaBadgeText: { color: colors.gold, fontFamily: face.bold, fontSize: 11 },
+  stepBarRow: { flexDirection: 'row', gap: 6 },
+  stepBarCol: { flex: 1, gap: 4 },
+  stepBarTrack: { height: 4, borderRadius: 2, backgroundColor: colors.border },
+  stepBarLabel: { color: colors.textFaint, fontFamily: face.medium, fontSize: 10 },
+  orderItemsBox: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+  },
+  orderItemLine: { flexDirection: 'row', justifyContent: 'space-between' },
+  orderItemText: { color: colors.text, fontFamily: face.semibold, fontSize: 12 },
+  orderItemPrice: { color: colors.textMuted, fontFamily: face.semibold, fontSize: 12 },
+  orderItemFooter: {
+    marginTop: 4,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  orderMetaText: { color: colors.textFaint, fontFamily: face.regular, fontSize: 10 },
+  orderSubtotalText: { color: colors.gold, fontFamily: face.bold, fontSize: 11 },
+  advanceBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  advanceBtnText: { color: colors.white, fontFamily: face.bold, fontSize: 11 },
+  list: { paddingHorizontal: 24, gap: 16, paddingBottom: 20 },
+  multiNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255, 184, 0, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 184, 0, 0.4)',
+    borderRadius: 14,
+    padding: 12,
+  },
+  multiNoticeText: { color: colors.textMuted, fontFamily: face.regular, fontSize: 11, lineHeight: 17, flex: 1 },
+  merchantGroupCard: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: 18,
+    padding: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  merchantGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingBottom: 10,
+  },
+  merchantBadge: {
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  merchantBadgeText: { color: colors.white, fontFamily: face.bold, fontSize: 8, letterSpacing: 0.8 },
+  merchantGroupTitle: { color: colors.text, fontFamily: face.bold, fontSize: 13, flex: 1 },
+  merchantGroupMeta: { color: colors.gold, fontFamily: face.semibold, fontSize: 10 },
+  itemRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+  image: { width: 64, height: 64, borderRadius: 12 },
   itemInfo: { flex: 1, justifyContent: 'center' },
-  merchant: { fontFamily: face.medium, color: colors.textFaint, fontSize: 10, marginBottom: 3 },
-  itemName: { fontFamily: face.bold, color: colors.text, fontSize: 15 },
-  itemBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 },
-  itemPrice: { fontFamily: face.bold, color: colors.text, fontSize: 14 },
-  quantity: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
-  quantityButton: { height: 36, width: 34, alignItems: 'center', justifyContent: 'center' },
-  qty: { fontFamily: face.bold, color: colors.text, fontSize: 12, paddingHorizontal: 6 },
-  sectionBlock: { gap: 10, marginTop: 4 },
+  itemName: { fontFamily: face.bold, color: colors.text, fontSize: 14 },
+  itemBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6 },
+  itemPrice: { fontFamily: face.bold, color: colors.text, fontSize: 13 },
+  quantity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  quantityButton: { height: 32, width: 30, alignItems: 'center', justifyContent: 'center' },
+  qty: { fontFamily: face.bold, color: colors.text, fontSize: 12, paddingHorizontal: 5 },
+  routeSummaryBox: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: 16,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  routeSummaryRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  routeSummaryIndex: {
+    color: colors.white,
+    backgroundColor: colors.accent,
+    fontFamily: face.bold,
+    fontSize: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  routeEta: { color: colors.gold, fontFamily: face.bold, fontSize: 11 },
+  sectionBlock: { gap: 10, marginTop: 2 },
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   sectionTitle: { color: colors.text, fontFamily: face.bold, fontSize: 13 },
   couponRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -482,26 +773,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  couponChipActive: {
-    backgroundColor: colors.accentSoft,
-    borderColor: colors.accent,
-  },
+  couponChipActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
   couponChipText: { color: colors.textMuted, fontFamily: face.semibold, fontSize: 11 },
   couponChipTextActive: { color: colors.white, fontFamily: face.bold },
   optionCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 14,
+    padding: 13,
     borderRadius: 15,
     backgroundColor: colors.surfaceRaised,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  optionCardActive: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
-  },
+  optionCardActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   radioOuter: {
     width: 18,
     height: 18,
@@ -526,24 +811,24 @@ const styles = StyleSheet.create({
   speedRow: { flexDirection: 'row', gap: 10 },
   speedCard: {
     flex: 1,
-    padding: 14,
+    padding: 13,
     borderRadius: 15,
     backgroundColor: colors.surfaceRaised,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  totals: { paddingHorizontal: 24, paddingTop: 16, borderTopColor: colors.border, borderTopWidth: 1, gap: 4 },
+  totals: { paddingHorizontal: 24, paddingTop: 14, borderTopColor: colors.border, borderTopWidth: 1, gap: 4 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  total: { fontFamily: face.display, color: colors.text, fontSize: 23, letterSpacing: -0.8 },
+  total: { fontFamily: face.display, color: colors.text, fontSize: 22, letterSpacing: -0.8 },
   checkout: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: colors.accent,
-    paddingHorizontal: 20,
-    paddingVertical: 17,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     borderRadius: 15,
   },
-  checkoutText: { fontFamily: face.bold, color: colors.onAccent, fontSize: 14 },
-  disclaimer: { fontFamily: face.medium, color: colors.textFaint, fontSize: 10, textAlign: 'center', marginTop: 8 },
+  checkoutText: { fontFamily: face.bold, color: colors.onAccent, fontSize: 13 },
+  disclaimer: { fontFamily: face.medium, color: colors.textFaint, fontSize: 10, textAlign: 'center', marginTop: 6 },
 });

@@ -195,3 +195,31 @@ export interface CartLine {
   dishId: string;
   qty: number;
 }
+
+export type OrderStage = 'confirmado' | 'preparando' | 'a_caminho' | 'entregue';
+
+export interface ActiveMerchantOrder {
+  id: string;
+  merchantId: string;
+  merchantName: string;
+  merchantEmoji: string;
+  etaMin: number;
+  deliveryFee: number;
+  subtotal: number;
+  items: Array<{ dishId: string; name: string; qty: number; price: number }>;
+  stage: OrderStage;
+  addressLabel: string;
+  addressDetail: string;
+  paymentTitle: string;
+  createdAt: number;
+}
+
+export interface CartMerchantGroup {
+  merchantId: string;
+  merchantName: string;
+  merchantEmoji: string;
+  etaMin: number;
+  deliveryFee: number;
+  subtotal: number;
+  items: Array<{ dishId: string; name: string; emoji: string; qty: number; price: number; merchantName: string }>;
+}

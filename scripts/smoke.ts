@@ -8,6 +8,7 @@
  */
 import { dishes, merchantById } from '../src/data/seed';
 import { runExperiment } from '../src/engine/experiment';
+import { groupCartByMerchant, nextOrderStage, splitCartIntoOrders } from '../src/engine/orders';
 import { buildFeed, defaultLab, rerankUpcoming, topTasteProfile, updateProfile } from '../src/engine/ranking';
 import { computeMetrics } from '../src/engine/metrics';
 import { evaluateTriggers } from '../src/engine/triggers';
@@ -256,6 +257,29 @@ check(
 check(
   'case study desdobra todas as intenções e guardrails de negócio',
   experiment.byIntent.length === 8 && experiment.guardrails.length === 4,
+);
+
+console.log('\n9) Sacola e roteamento multi-restaurante');
+
+const multiCart = [
+  { dishId: 'd01', qty: 2 }, // m1 - Burger do Velho Chico
+  { dishId: 'd13', qty: 1 }, // m4 - Cantinho Nordestino
+  { dishId: 'd37', qty: 1 }, // m12 - Doce Petrolina
+];
+const grouped = groupCartByMerchant(multiCart);
+const splitOrders = splitCartIntoOrders(multiCart, { addressLabel: 'Casa', paymentTitle: 'Pix' });
+check('agrupa sacola por restaurante distinto', grouped.length === 3);
+check(
+  'gera um pedido em andamento separado para cada restaurante',
+  splitOrders.length === 3 &&
+    splitOrders.map((o) => o.merchantId).join(',') === 'm1,m4,m12' &&
+    new Set(splitOrders.map((o) => o.id)).size === 3,
+);
+check(
+  'cada restaurante recebe apenas seus próprios itens e subtotal correto',
+  splitOrders[0]?.items.length === 1 &&
+    splitOrders[0]?.items[0]?.qty === 2 &&
+    nextOrderStage(splitOrders[0].stage) === 'a_caminho',
 );
 
 console.log(`\n${failures === 0 ? 'todos os checks passaram' : `${failures} check(s) falharam`}\n`);

@@ -30,11 +30,12 @@ function Shell() {
   const { width } = useWindowDimensions();
   const inset = useSafeAreaInsets();
   const desktop = width >= 1100;
-  const { state, cartTotal, actions } = useStore();
+  const { state, cartGroups, cartTotal, actions } = useStore();
   const count = state.cart.reduce((total, line) => total + line.qty, 0);
+  const activeOrdersCount = state.activeOrders.length;
   const technical = tab === 'lab' || tab === 'experiment';
   const cart = () => {
-    actions.closeCheckout();
+    if (count > 0) actions.closeCheckout();
     setCartOpen(true);
   };
 
@@ -136,26 +137,34 @@ function Shell() {
         </View>
       </View>
 
-      {/* Barra vermelha flutuante estilo iFood quando há itens na sacola */}
-      {count > 0 && !cartOpen && (
+      {/* Barra flutuante: mostra sacola atual OU pedidos em andamento por restaurante */}
+      {(count > 0 || activeOrdersCount > 0) && !cartOpen && (
         <View style={styles.floatingBagWrap}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Ver sacola e finalizar pedido"
+            accessibilityLabel={count > 0 ? 'Ver sacola e finalizar pedido' : 'Acompanhar pedidos em andamento'}
             onPress={cart}
-            style={styles.floatingBagBar}
+            style={[styles.floatingBagBar, count === 0 && styles.floatingTrackingBar]}
           >
             <View style={styles.floatingBagLeft}>
               <View style={styles.floatingBagBadge}>
-                <Text style={styles.floatingBagBadgeText}>{count}</Text>
+                <Text style={styles.floatingBagBadgeText}>{count > 0 ? count : activeOrdersCount}</Text>
               </View>
-              <View>
-                <Text style={styles.floatingBagTitle}>Ver sacola e fazer checkout</Text>
-                <Text style={styles.floatingBagSub}>Entrega e pagamento em 1 toque</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.floatingBagTitle} numberOfLines={1}>
+                  {count > 0
+                    ? `Ver sacola (${cartGroups.length} ${cartGroups.length > 1 ? 'restaurantes' : 'restaurante'})`
+                    : `${activeOrdersCount} ${activeOrdersCount > 1 ? 'pedidos em andamento' : 'pedido em andamento'}`}
+                </Text>
+                <Text style={styles.floatingBagSub} numberOfLines={1}>
+                  {count > 0
+                    ? cartGroups.map((g) => g.merchantName).join(' + ')
+                    : state.activeOrders.map((o) => `${o.merchantName} (${o.stage.replace('_', ' ')})`).join(' · ')}
+                </Text>
               </View>
             </View>
             <View style={styles.floatingBagRight}>
-              <Text style={styles.floatingBagTotal}>{formatBRL(cartTotal)}</Text>
+              <Text style={styles.floatingBagTotal}>{count > 0 ? formatBRL(cartTotal) : 'Acompanhar'}</Text>
               <ArrowUpRight size={18} color={colors.white} />
             </View>
           </Pressable>
@@ -274,8 +283,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: 'rgba(255, 184, 0, 0.45)',
+    gap: 10,
   },
-  floatingBagLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  floatingTrackingBar: {
+    backgroundColor: '#1E1212',
+    borderColor: colors.gold,
+  },
+  floatingBagLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   floatingBagBadge: {
     minWidth: 26,
     height: 26,
